@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Quick Notes - Screenshots</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    .screenshot { width: 1280px; height: 800px; display: flex; align-items: center; justify-content: center; margin: 20px auto; position: relative; overflow: hidden; }
+    .screenshot-1 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .screenshot-2 { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+    .screenshot-3 { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+    
+    .popup-mock { width: 360px; background: #0f0f0f; border-radius: 12px; box-shadow: 0 25px 80px rgba(0,0,0,0.5); overflow: hidden; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #1a1a1a; border-bottom: 1px solid #333; }
+    .header-left { display: flex; align-items: center; gap: 8px; }
+    .logo { font-size: 18px; }
+    .title { color: white; font-weight: 600; }
+    .speed { font-size: 10px; color: #FBBF24; background: rgba(251,191,36,0.15); padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+    .header-right { display: flex; gap: 8px; }
+    .icon-btn { background: none; border: none; font-size: 16px; cursor: pointer; }
+    
+    .search { padding: 12px 16px; }
+    .search input { width: 100%; padding: 8px 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; color: #666; font-size: 13px; }
+    
+    .new-note { margin: 0 16px 12px; padding: 12px; background: linear-gradient(135deg, #8B5CF6, #3B82F6); color: white; border: none; border-radius: 8px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    
+    .notes { padding: 0 16px 16px; }
+    .note { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+    .note.pinned { border-left: 3px solid #8B5CF6; }
+    .note-title { color: white; font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .note-preview { color: #666; font-size: 13px; margin-bottom: 4px; }
+    .note-date { color: #444; font-size: 11px; }
+    .pin { font-size: 12px; }
+    
+    .tagline { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); color: white; font-size: 32px; font-weight: 700; text-align: center; text-shadow: 0 2px 20px rgba(0,0,0,0.3); }
+    .tagline span { color: #FBBF24; }
+    .subtitle { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.8); font-size: 18px; }
+    
+    .features { position: absolute; right: 80px; top: 50%; transform: translateY(-50%); color: white; }
+    .feature { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; font-size: 18px; }
+    .feature-icon { font-size: 24px; }
+    
+    .page-label { position: fixed; top: 10px; left: 10px; background: #333; color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<!-- Screenshot 1: Main view with tagline -->
+<div class="screenshot screenshot-1" id="ss1">
+  <div class="popup-mock">
+    <div class="header">
+      <div class="header-left">
+        <span class="logo">⚡</span>
+        <span class="title">Quick Notes</span>
+        <span class="speed">23ms</span>
+      </div>
+      <div class="header-right">
+        <span class="icon-btn">✨</span>
+        <span class="icon-btn">⚙️</span>
+      </div>
+    </div>
+    <div class="search"><input placeholder="Type / to search..." readonly></div>
+    <button class="new-note">+ New Note <span style="opacity:0.7;font-size:12px">Ctrl+N</span></button>
+    <div class="notes">
+      <div class="note pinned">
+        <div class="note-title"><span class="pin">📌</span> Project Ideas</div>
+        <div class="note-preview">Build a notes app that loads instantly...</div>
+        <div class="note-date">Today</div>
+      </div>
+      <div class="note">
+        <div class="note-title">Meeting Notes</div>
+        <div class="note-preview">Discuss Q1 roadmap with team...</div>
+        <div class="note-date">Yesterday</div>
+      </div>
+      <div class="note">
+        <div class="note-title">Shopping List</div>
+        <div class="note-preview">Milk, eggs, bread, coffee...</div>
+        <div class="note-date">Jan 19</div>
+      </div>
+    </div>
+  </div>
+  <div class="tagline">The <span>Fastest</span> Notes Extension</div>
+  <subtitle class="subtitle">Opens in under 50ms. No account needed.</subtitle>
+</div>
+
+<!-- Screenshot 2: Features -->
+<div class="screenshot screenshot-2" id="ss2">
+  <div class="popup-mock" style="transform: scale(0.9); margin-right: 100px;">
+    <div class="header">
+      <div class="header-left">
+        <span class="logo">⚡</span>
+        <span class="title">Quick Notes</span>
+        <span class="speed">18ms</span>
+      </div>
+    </div>
+    <div class="search"><input placeholder="Type / to search..." readonly></div>
+    <button class="new-note">+ New Note</button>
+    <div class="notes">
+      <div class="note pinned">
+        <div class="note-title"><span class="pin">📌</span> Quick capture</div>
+        <div class="note-preview">Instantly save any thought...</div>
+        <div class="note-date">Now</div>
+      </div>
+    </div>
+  </div>
+  <div class="features">
+    <div class="feature"><span class="feature-icon">⚡</span> Opens in &lt;50ms</div>
+    <div class="feature"><span class="feature-icon">⌨️</span> Keyboard-first design</div>
+    <div class="feature"><span class="feature-icon">🔒</span> 100% private & local</div>
+    <div class="feature"><span class="feature-icon">🚫</span> No account required</div>
+    <div class="feature"><span class="feature-icon">🌐</span> Auto-captures page context</div>
+  </div>
+</div>
+
+<!-- Screenshot 3: Pro features -->
+<div class="screenshot screenshot-3" id="ss3">
+  <div style="text-align: center; color: white;">
+    <div style="font-size: 48px; margin-bottom: 20px;">⚡ Quick Notes Pro</div>
+    <div style="font-size: 24px; margin-bottom: 40px; opacity: 0.9;">One-time $2.99 • No subscription</div>
+    <div style="display: flex; gap: 40px; justify-content: center; font-size: 20px;">
+      <div>📝 Unlimited Notes</div>
+      <div>🔍 Search</div>
+      <div>📤 Export</div>
+      <div>♾️ No limits</div>
+    </div>
+  </div>
+</div>
+
+<div class="page-label">Right-click → Save image as... (1280x800)</div>
+
+<script>
+// Instructions
+console.log('To save screenshots:');
+console.log('1. Right-click on each screenshot area');
+console.log('2. Select "Save image as..." or use browser screenshot tool');
+console.log('3. Or use Windows Snipping Tool on each section');
+</script>
+</body>
+</html>

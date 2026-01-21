@@ -1,0 +1,11 @@
+{
+  "name": "quick-notes",
+  "version": "1.0.0",
+  "description": "Lightning-fast notes. Unlimited notes, rich text, search - all FREE.",
+  "author": "loquit-doru",
+  "license": "MIT",
+  "scripts": {
+    "gen-icons": "node scripts/gen-icons.mjs"
+  },
+  "devDependencies": {}
+}

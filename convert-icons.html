@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script>
+const sizes = [16, 32, 48, 128];
+const baseUrl = 'file:///C:/Users/quit/Desktop/quick-notes/icons/';
+
+sizes.forEach(size => {
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    const link = document.createElement('a');
+    link.download = `icon${size}.png`;
+    link.href = canvas.toDataURL('image/png');
+    document.body.appendChild(link);
+    link.innerHTML = `Download icon${size}.png`;
+    link.style.display = 'block';
+  };
+  img.src = `${baseUrl}icon${size}.svg`;
+});
+</script>
+</head>
+<body><h1>Click links to download PNGs</h1></body>
+</html>

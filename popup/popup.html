@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Notes</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">⚡</span>
+      <h1 class="title">Quick Notes</h1>
+      <span class="speed-badge" id="speedBadge" title="Load time">--ms</span>
+    </div>
+    <div class="header-right">
+      <button class="btn-icon btn-pro-header" id="proHeaderBtn" title="Upgrade to Pro">✨</button>
+      <button class="btn-icon" id="settingsBtn" title="Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Search Bar -->
+  <div class="search-container" id="searchContainer">
+    <input type="text" class="search-input" id="searchInput" placeholder="Type / to search...">
+    <span class="search-hint">/</span>
+    <button class="btn-clear" id="clearSearch" style="display: none;">✕</button>
+  </div>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- List View -->
+    <div class="view" id="listView">
+      <button class="btn-new-note" id="newNoteBtn">
+        <span class="plus">+</span>
+        <span>New Note</span>
+        <span class="shortcut-hint">Ctrl+N</span>
+      </button>
+      <div class="notes-list" id="notesList"></div>
+      <div class="empty-state" id="emptyState" style="display: none;">
+        <div class="empty-icon">⚡</div>
+        <p class="empty-text">Capture your first thought</p>
+        <p class="empty-subtext">Press <kbd>Ctrl+N</kbd> or click New Note</p>
+      </div>
+    </div>
+
+    <!-- Editor View -->
+    <div class="view" id="editorView" style="display: none;">
+      <div class="editor-header">
+        <button class="btn-back" id="backBtn" title="Back (Esc)">← <span class="shortcut-hint">Esc</span></button>
+        <div class="editor-actions">
+          <button class="btn-icon" id="pinNoteBtn" title="Pin note">📍</button>
+          <button class="btn-icon" id="deleteNoteBtn" title="Delete note">🗑️</button>
+        </div>
+      </div>
+      <div class="context-info" id="contextInfo" style="display: none;">
+        <img class="context-favicon" id="contextFavicon" src="" alt="">
+        <a class="context-link" id="contextLink" href="#" target="_blank"></a>
+        <button class="btn-remove-context" id="removeContext" title="Remove context">✕</button>
+      </div>
+      <input type="text" class="note-title-input" id="noteTitleInput" placeholder="Title...">
+      <div class="toolbar">
+        <button class="toolbar-btn" data-command="bold" title="Bold"><b>B</b></button>
+        <button class="toolbar-btn" data-command="italic" title="Italic"><i>I</i></button>
+        <button class="toolbar-btn" data-command="underline" title="Underline"><u>U</u></button>
+        <span class="toolbar-divider"></span>
+        <button class="toolbar-btn" data-command="insertUnorderedList" title="Bullet list">•</button>
+        <button class="toolbar-btn" data-command="insertOrderedList" title="Numbered list">1.</button>
+      </div>
+      <div class="note-content-editor" id="noteContentEditor" contenteditable="true" placeholder="Start typing..."></div>
+      <div class="note-meta" id="noteMeta">
+        <span id="noteDate"></span>
+        <span id="noteChars"></span>
+        <span class="save-hint">Ctrl+Enter to save</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="shortcuts-footer" id="shortcutsFooter">
+    <span><kbd>/</kbd> Search</span>
+    <span><kbd>Ctrl+N</kbd> New</span>
+    <span><kbd>Esc</kbd> Back</span>
+  </footer>
+
+  <!-- Toast -->
+  <div class="toast" id="copyToast">📋 Copied!</div>
+
+  <!-- Settings Modal -->
+  <div class="modal" id="settingsModal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>⚙️ Settings</h2>
+        <button class="btn-close" id="closeSettingsBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <h3 class="settings-section-title">⚡ Speed</h3>
+          <div class="setting-item">
+            <div class="setting-info">
+              <label>Fast Mode</label>
+              <p class="setting-desc">Disable animations for max speed</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="fastModeToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <div class="setting-info">
+              <label>Quick Add Mode</label>
+              <p class="setting-desc">Open directly to editor</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="quickAddToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-section-title">⌨️ Keyboard</h3>
+          <div class="setting-item shortcuts-display">
+            <div class="shortcuts-list">
+              <div><kbd>Alt+Q</kbd> Open from anywhere</div>
+              <div><kbd>Ctrl+N</kbd> New note</div>
+              <div><kbd>/</kbd> Focus search</div>
+              <div><kbd>Esc</kbd> Go back / Close</div>
+              <div><kbd>Ctrl+Enter</kbd> Save & close</div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-section-title">🔗 Context</h3>
+          <div class="setting-item">
+            <div class="setting-info">
+              <label>Include Page Context</label>
+              <p class="setting-desc">Auto-capture URL & title</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="includeContextToggle" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-section-title">🎨 Appearance</h3>
+          <div class="setting-item">
+            <div class="setting-info"><label>Theme</label></div>
+            <select id="themeSelect">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-section-title">📦 Data</h3>
+          <div class="setting-item">
+            <label>Export Notes</label>
+            <div class="export-buttons">
+              <button class="btn-export" data-format="json">JSON</button>
+              <button class="btn-export" data-format="md">Markdown</button>
+              <button class="btn-export" data-format="txt">Text</button>
+            </div>
+          </div>
+          <div class="setting-item">
+            <label>Import Notes</label>
+            <input type="file" id="importFile" accept=".json" style="display: none;">
+            <button class="btn-secondary" id="importBtn">Import JSON</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRO UPGRADE MODAL with Card + Crypto -->
+  <div class="modal" id="proModal" style="display: none;">
+    <div class="modal-content pro-modal">
+      <div class="modal-header pro-header">
+        <h2>✨ Quick Notes Pro</h2>
+        <button class="btn-close" id="closeProBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="pro-tagline">Unlock the full power of Quick Notes</p>
+        
+        <div class="pro-price">
+          <span class="price-amount">$2.99</span>
+          <span class="price-period">one-time</span>
+        </div>
+
+        <div class="pro-features">
+          <div class="pro-feature">
+            <span class="pro-feature-icon">📝</span>
+            <div class="pro-feature-info">
+              <strong>Markdown Support</strong>
+              <p>Write in Markdown with live preview</p>
+            </div>
+          </div>
+          <div class="pro-feature">
+            <span class="pro-feature-icon">🏷️</span>
+            <div class="pro-feature-info">
+              <strong>Categories & Tags</strong>
+              <p>Organize notes with custom labels</p>
+            </div>
+          </div>
+          <div class="pro-feature">
+            <span class="pro-feature-icon">🤖</span>
+            <div class="pro-feature-info">
+              <strong>AI Summarize</strong>
+              <p>Auto-summarize long notes</p>
+            </div>
+          </div>
+          <div class="pro-feature">
+            <span class="pro-feature-icon">☁️</span>
+            <div class="pro-feature-info">
+              <strong>Cloud Sync</strong>
+              <p>Sync across all your devices</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment Methods -->
+        <div class="payment-methods">
+          <div class="payment-method active" id="payment-card" data-method="card">
+            <span class="payment-icon">💳</span>
+            <span>Card</span>
+          </div>
+          <div class="payment-method" id="payment-crypto" data-method="crypto">
+            <span class="payment-icon">₿</span>
+            <span>Crypto</span>
+          </div>
+        </div>
+
+        <!-- Card Payment -->
+        <div class="payment-section" id="cardSection">
+          <button class="btn-upgrade" id="upgradeBtn">
+            <span>Pay with Card</span>
+            <span class="btn-upgrade-price">$2.99</span>
+          </button>
+          <p class="payment-note">Secure payment via Stripe</p>
+        </div>
+
+        <!-- Crypto Payment -->
+        <div class="payment-section" id="cryptoSection" style="display: none;">
+          <div class="crypto-info">
+            <div class="crypto-network">
+              <span class="network-badge">Base Network</span>
+            </div>
+            <p class="crypto-price">Send <strong>0.001 ETH</strong> or <strong>3 USDC</strong></p>
+            <div class="crypto-address">
+              <code id="cryptoAddress">0x607Fc9D41858Aa23065275043698a9262F8f9bf9</code>
+              <button class="btn-copy" id="copyAddressBtn" title="Copy address">📋</button>
+            </div>
+          </div>
+          <div class="crypto-verify">
+            <input type="text" id="txHashInput" placeholder="Paste transaction hash...">
+            <button class="btn-verify" id="verifyTxBtn">Verify</button>
+          </div>
+          <p class="crypto-note" id="cryptoStatus"></p>
+        </div>
+
+        <p class="pro-guarantee">💚 30-day money back guarantee</p>
+
+        <!-- Already Pro -->
+        <div class="pro-status" id="proStatus" style="display: none;">
+          <span class="pro-badge">✨ PRO</span>
+          <p>Thank you for supporting Quick Notes!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Welcome Modal -->
+  <div class="modal" id="welcomeModal" style="display: none;">
+    <div class="modal-content welcome-modal">
+      <div class="welcome-header">
+        <span class="welcome-icon">⚡</span>
+        <h2>Ready to capture</h2>
+      </div>
+      <div class="welcome-body">
+        <p class="welcome-tagline">The fastest notes extension on Chrome.</p>
+        <div class="welcome-speed" id="welcomeSpeed">Loaded in --ms</div>
+        <div class="welcome-tip"><kbd>Ctrl+Enter</kbd> to save instantly</div>
+      </div>
+      <button class="btn-primary welcome-start" id="welcomeStartBtn">Start capturing ⚡</button>
+    </div>
+  </div>
+
+  <script src="../lib/ExtPay.js"></script>
+  <script src="pro.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
+

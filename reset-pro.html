@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><title>Reset Pro</title></head>
+<body>
+<h2>Quick Notes - Reset Pro License</h2>
+<button onclick="resetPro()">Reset Pro License</button>
+<p id="status"></p>
+<script>
+async function resetPro() {
+  await chrome.storage.sync.remove(['proUnlocked', 'cryptoTxHash', 'cryptoPaidAt', 'proPaidAt', 'paymentMethod']);
+  document.getElementById('status').textContent = '✅ Reset! Close and reopen extension.';
+}
+</script>
+</body>
+</html>
