@@ -9,6 +9,3 @@ generate-icons.html
 
 # Local store/marketing assets (keep locally, don't version by default)
 screenshots/
-
-# Claude local config
-.claude/
