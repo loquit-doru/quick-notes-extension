@@ -1,0 +1,21 @@
+name = "quick-notes-pro"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Create in Cloudflare dashboard: Workers → KV → Create namespace
+# Then: wrangler kv:namespace create LICENSES
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "6f886756a38a45ac9f325770aa2cebc9"
+
+[vars]
+# DEV / emergency only — comma-separated emails when Stripe secret is missing or broken.
+# Production: MUST be empty. Use wrangler secret put STRIPE_SECRET_KEY (sk_live_... / sk_test_...).
+# After changing this file: cd workers && wrangler deploy
+STRIPE_ALLOWLIST = ""
+MAX_DEVICES = "3"
+
+# Production (required for automatic restore for all paying customers):
+#   wrangler secret put STRIPE_SECRET_KEY
+# Optional future webhook:
+#   wrangler secret put STRIPE_WEBHOOK_SECRET

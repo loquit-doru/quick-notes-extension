@@ -5,3 +5,6 @@ node_modules/
 Thumbs.db
 generate-icons.html
 *.zip
+
+# Local store/marketing assets (keep locally, don't version by default)
+screenshots/

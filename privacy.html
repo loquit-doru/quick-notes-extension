@@ -11,57 +11,48 @@
     h2 { color: #6366F1; margin-top: 30px; margin-bottom: 15px; border-bottom: 2px solid #E5E7EB; padding-bottom: 5px; }
     p, li { margin-bottom: 10px; }
     ul { margin-left: 20px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th, td { border: 1px solid #E5E7EB; padding: 8px 10px; text-align: left; }
+    th { background: #F9FAFB; }
     .highlight { background: #F3F4F6; padding: 15px; border-radius: 8px; margin: 15px 0; }
     .date { color: #666; font-size: 14px; }
     .contact { background: #EEF2FF; padding: 15px; border-radius: 8px; margin-top: 30px; }
   </style>
 </head>
 <body>
-  <h1>⚡ Quick Notes - Privacy Policy</h1>
-  <p class="date">Last updated: January 21, 2026</p>
+  <h1>Quick Notes - Privacy Policy</h1>
+  <p class="date">Last updated: May 16, 2026</p>
 
   <div class="highlight">
-    <strong>TL;DR:</strong> Your notes stay on YOUR device. We never see them. No tracking. No analytics. No cloud.
+    <strong>TL;DR:</strong> Your notes stay on your device. We do not receive your note text unless you use optional payment/license checks (email or transaction hash only).
   </div>
-
-  <h2>Overview</h2>
-  <p>Quick Notes is built with privacy as a core principle. We believe your notes are yours alone.</p>
-
-  <h2>Data We DON'T Collect</h2>
-  <ul>
-    <li>❌ Personal information</li>
-    <li>❌ Note contents</li>
-    <li>❌ Browsing history</li>
-    <li>❌ Usage analytics</li>
-    <li>❌ Any identifiable data</li>
-  </ul>
 
   <h2>Data Storage</h2>
   <ul>
-    <li>✅ All notes are stored <strong>locally</strong> on your device using IndexedDB</li>
-    <li>✅ Notes never leave your browser unless you explicitly export them</li>
-    <li>✅ No cloud sync = no data transmission</li>
+    <li>Notes, folders, and trash: <strong>IndexedDB</strong> (local)</li>
+    <li>Settings, reminders, trial, PIN: <strong>chrome.storage.local</strong></li>
+    <li>No cloud sync by default</li>
   </ul>
 
-  <h2>Permissions Used</h2>
-  <ul>
-    <li><strong>storage</strong> - To save your notes locally on your device</li>
-    <li><strong>activeTab</strong> - To capture page context (URL/title) when you create a note</li>
-    <li><strong>tabs</strong> - To get current tab information for context capture</li>
-  </ul>
+  <h2>Permissions</h2>
+  <table>
+    <tr><th>Permission</th><th>Purpose</th></tr>
+    <tr><td>storage</td><td>Local settings and reminder data</td></tr>
+    <tr><td>activeTab / tabs</td><td>Optional page context (URL &amp; title) on new notes</td></tr>
+    <tr><td>alarms</td><td>Schedule note reminders</td></tr>
+    <tr><td>notifications</td><td>Show reminder alerts</td></tr>
+  </table>
 
   <h2>Third-Party Services</h2>
   <ul>
-    <li><strong>ExtensionPay</strong> - Used only for processing card payments. We do not store or see payment details.</li>
-    <li><strong>Base Network</strong> - Used only for verifying crypto payments. Only transaction hashes are checked publicly on the blockchain.</li>
+    <li><strong>ExtensionPay</strong> — Card payments (Stripe). We do not store card details.</li>
+    <li><strong>License API</strong> — <code>quick-notes-pro.apiworkersdev.workers.dev</code> — Crypto verify / license restore only (email and/or tx hash; not note contents).</li>
+    <li><strong>Base Network</strong> — Public transaction verification for crypto payments.</li>
   </ul>
 
-  <h2>Changes to This Policy</h2>
-  <p>We may update this policy occasionally. Changes will be posted on this page with an updated date.</p>
-
+  <h2>Contact</h2>
   <div class="contact">
-    <h2 style="margin-top: 0;">Contact</h2>
-    <p>For privacy concerns or questions, contact us at: <strong>quicknotes.extension@gmail.com</strong></p>
+    <p><strong>quicknotes.extension@gmail.com</strong></p>
   </div>
 </body>
 </html>

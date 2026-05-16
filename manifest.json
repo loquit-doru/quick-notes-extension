@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Quick Notes",
-  "version": "1.0.0",
-  "description": "The fastest notes extension on Chrome. Instant capture. Zero friction. Keyboard-first.",
+  "version": "1.7.0",
+  "description": "The fastest notes extension on Chrome. Folders, PIN lock, reminders, instant capture. Zero friction. Your notes are always safe.",
   "author": "Quick Notes Team",
   "icons": {
     "16": "icons/icon16.png",
@@ -25,7 +25,9 @@
   "permissions": [
     "storage",
     "activeTab",
-    "tabs"
+    "tabs",
+    "alarms",
+    "notifications"
   ],
   "commands": {
     "_execute_action": {
