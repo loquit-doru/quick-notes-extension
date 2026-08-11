@@ -21,7 +21,6 @@
       <h1 class="title">Quick Notes</h1>
     </div>
     <div class="header-right">
-      <span class="speed-badge" id="speedBadge" title="Load time">--ms</span>
       <button class="btn-icon btn-pro-header" id="proHeaderBtn" title="Upgrade to Pro" aria-label="Upgrade to Pro">✨</button>
       <button class="btn-icon" id="settingsBtn" title="Settings" aria-label="Settings">
         <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="15" height="15">
@@ -32,10 +31,12 @@
     </div>
   </header>
 
-  <!-- Trial Banner -->
-  <div class="trial-banner" id="trialBanner" style="display: none;">
-    <span id="trialDays">🎁 7 days left in trial</span>
-    <button class="btn-trial-upgrade" id="trialUpgradeBtn">Upgrade</button>
+  <div class="popup-primary-action" id="popupPrimaryAction">
+    <button class="btn-new-note" id="newNoteBtn">
+      <span class="plus">+</span>
+      <span>New Note</span>
+      <span class="shortcut-hint">Ctrl+N</span>
+    </button>
   </div>
 
   <!-- Search Bar -->
@@ -48,31 +49,67 @@
     <button class="btn-clear" id="clearSearch" style="display: none;">✕</button>
   </div>
 
-  <!-- Folder Filter -->
-  <div class="folder-filter" id="folderFilter">
-    <div class="folder-pills" id="folderPills"></div>
-    <button class="btn-manage-folders" id="manageFoldersBtn" title="Manage folders" aria-label="Manage folders">+</button>
+  <!-- List filters: All · Inbox · Personal · Work · + menu -->
+  <div class="folder-filter list-filter-bar" id="folderFilter">
+    <div class="folder-pills list-filter-pills" id="folderPills"></div>
+    <div class="list-filter-more-wrap" id="listFilterMoreWrap">
+      <button
+        type="button"
+        class="btn-manage-folders"
+        id="manageFoldersBtn"
+        title="More"
+        aria-label="More"
+        aria-haspopup="menu"
+        aria-expanded="false"
+        aria-controls="listFilterMenu"
+      >+</button>
+      <div class="list-filter-menu" id="listFilterMenu" role="menu" hidden></div>
+    </div>
+  </div>
+
+  <!-- Page Memory — compact; only when related notes exist -->
+  <section class="page-memory page-memory--compact" id="pageMemorySection" hidden aria-label="Page memory">
+    <div class="page-memory-row">
+      <span class="page-memory-label">Page Memory</span>
+      <span class="page-memory-stats" id="pageMemoryStats"></span>
+      <div class="page-memory-actions">
+        <button type="button" class="btn-page-memory" id="showPageNotesBtn">Page</button>
+        <button type="button" class="btn-page-memory" id="showSiteNotesBtn">Site</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Trial hint (below primary controls; hidden for Pro) -->
+  <div class="trial-banner" id="trialBanner" style="display: none;">
+    <span id="trialDays">7 days left in trial</span>
+    <button class="btn-trial-upgrade" id="trialUpgradeBtn">Upgrade</button>
+  </div>
+  <div class="trial-banner" id="backupSafetyBanner" style="display: none;">
+    <span>Safety tip: export a JSON backup before uninstalling.</span>
+    <div class="trial-banner-actions">
+      <button class="btn-trial-upgrade" id="backupSafetyActionBtn">Open backup tools</button>
+      <button class="btn-trial-upgrade" id="backupSafetyDismissBtn" type="button">Dismiss</button>
+    </div>
+  </div>
+  <div class="trial-banner" id="reviewBanner" style="display: none;">
+    <span>Finding Quick Notes useful? A short review helps other people find it.</span>
+    <div class="trial-banner-actions">
+      <button class="btn-trial-upgrade" id="reviewBannerActionBtn">Leave a review</button>
+      <button class="btn-trial-upgrade" id="reviewBannerDismissBtn" type="button">Not now</button>
+    </div>
   </div>
 
   <!-- Main Content -->
   <main class="main">
     <!-- List View -->
     <div class="view" id="listView">
-      <button class="btn-new-note" id="newNoteBtn">
-        <span class="plus">+</span>
-        <span>New Note</span>
-        <span class="shortcut-hint">Ctrl+N</span>
-      </button>
       <div id="notesLimitIndicator" class="limit-indicator" style="display: none;"></div>
       <div class="notes-list" id="notesList"></div>
       <div class="empty-state" id="emptyState" style="display: none;">
-        <div class="empty-icon">⚡</div>
-        <p class="empty-text">Capture your first thought</p>
-        <p class="empty-subtext">Press <kbd>Ctrl+N</kbd> or click New Note</p>
+        <div class="empty-icon" id="emptyStateIcon">⚡</div>
+        <p class="empty-text" id="emptyStateText">Capture your first thought</p>
+        <p class="empty-subtext" id="emptyStateSubtext">Press <kbd>Ctrl+N</kbd> or click New Note</p>
       </div>
-      <button class="btn-trash-toggle" id="trashToggleBtn" style="display: none;">
-        🗑️ Trash <span id="trashCount"></span>
-      </button>
     </div>
 
     <!-- Trash View -->
@@ -150,7 +187,7 @@
     <div class="modal-content reminder-modal">
       <div class="modal-header">
         <h2 id="reminderModalTitle">⏰ Set Reminder</h2>
-        <button class="btn-close" id="closeReminderBtn">✕</button>
+        <button class="btn-close" id="closeReminderBtn" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
         <div class="reminder-quick-options">
@@ -187,7 +224,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="settingsModalTitle">⚙️ Settings</h2>
-        <button class="btn-close" id="closeSettingsBtn">✕</button>
+        <button class="btn-close" id="closeSettingsBtn" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
         <div class="settings-section settings-section-priority">
@@ -216,6 +253,10 @@
             <label>Import notes</label>
             <input type="file" id="importFile" accept=".json" style="display: none;">
             <button type="button" class="btn-secondary" id="importBtn">Import JSON backup</button>
+          </div>
+          <div class="setting-item">
+            <label>Recovery steps</label>
+            <p class="settings-hint">1) Keep at least one recent JSON backup file. 2) If notes disappear after reinstall, import that file here. 3) Pro users can also restore the latest auto-backup when no notes exist.</p>
           </div>
         </div>
         <div class="settings-section">
@@ -252,6 +293,37 @@
               <div><kbd>Ctrl+Enter</kbd> Save & close</div>
             </div>
           </div>
+        </div>
+        <div class="settings-section settings-trust-center">
+          <h3 class="settings-section-title">Privacy &amp; Trust</h3>
+          <ul class="trust-list">
+            <li><strong>Notes storage:</strong> Your notes are stored locally in your browser.</li>
+            <li><strong>Note content:</strong> Quick Notes does not collect, transmit, sell, or share your note content.</li>
+            <li><strong>Page context:</strong> If enabled, Quick Notes may save the current page title and URL with your note. This stays local.</li>
+            <li><strong>Usage insights:</strong> Optional local-only funnel counters (install/first open/first note/reminder/upgrade/restore) stored on this device.</li>
+            <li><strong>Cloud sync:</strong> No cloud sync.</li>
+            <li><strong>Payments:</strong> If you upgrade to Pro, payment providers may process payment-related information. Quick Notes does not store card details.</li>
+          </ul>
+          <div class="setting-item">
+            <div class="setting-info">
+              <label>Local usage insights</label>
+              <p class="setting-desc">Store minimal funnel events on this device only (no note text, no network telemetry).</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="analyticsToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <h4 class="trust-subheading">Permissions</h4>
+          <ul class="trust-permissions">
+            <li><code>storage</code> — save notes and settings on this device</li>
+            <li><code>activeTab</code> — optionally attach the current page after you open the extension</li>
+            <li><code>alarms</code> — schedule reminders you set</li>
+            <li><code>notifications</code> — reminder alerts and optional update notices</li>
+          </ul>
+          <h4 class="trust-subheading">Your data</h4>
+          <p class="settings-hint">Export your notes using the backup section above. Uninstalling the extension removes local data unless you saved a backup.</p>
+          <a href="../privacy.html" target="_blank" rel="noopener noreferrer" class="trust-policy-link">View privacy policy</a>
         </div>
         <div class="settings-section">
           <h3 class="settings-section-title">🔗 Context</h3>
@@ -298,15 +370,15 @@
     </div>
   </div>
 
-  <!-- PRO UPGRADE MODAL with Card + Crypto -->
+  <!-- PRO UPGRADE MODAL -->
   <div class="modal" id="proModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="proModalTitle">
     <div class="modal-content pro-modal">
       <div class="modal-header pro-header">
         <h2 id="proModalTitle">✨ Quick Notes Pro</h2>
-        <button class="btn-close" id="closeProBtn">✕</button>
+        <button class="btn-close" id="closeProBtn" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
-        <p class="pro-tagline">Unlock the full power of Quick Notes</p>
+        <p class="pro-tagline">Upgrade only if Quick Notes becomes part of your daily workflow.</p>
         
         <div class="pro-price">
           <span class="price-amount">$2.99</span>
@@ -317,12 +389,7 @@
         <div class="features-list">
           <div class="feature-row">
             <span>📝 Notes</span>
-            <span class="feature-free">5 free</span>
-            <span class="feature-pro">∞ PRO</span>
-          </div>
-          <div class="feature-row">
-            <span>✏️ Chars/note</span>
-            <span class="feature-free">500</span>
+            <span class="feature-free">10 notes</span>
             <span class="feature-pro">∞ PRO</span>
           </div>
           <div class="feature-row">
@@ -352,73 +419,29 @@
           </div>
         </div>
 
-        <!-- Payment Methods -->
-        <div class="payment-methods">
-          <div class="payment-method active" id="payment-card" data-method="card">
-            <span class="payment-icon">💳</span>
-            <span>Card</span>
-          </div>
-          <div class="payment-method" id="payment-crypto" data-method="crypto">
-            <span class="payment-icon">₿</span>
-            <span>Crypto</span>
-          </div>
-        </div>
-
         <!-- Card Payment -->
         <div class="payment-section" id="cardSection">
           <button class="btn-upgrade" id="upgradeBtn">
             <span>Pay with Card</span>
             <span class="btn-upgrade-price">$2.99</span>
           </button>
-          <p class="payment-note">Secure payment via Stripe. Restore with the email on your receipt, or ExtensionPay on this profile.</p>
-          <p class="payment-note payment-note-ro">Plată Stripe. Restaurează cu emailul de pe chitanță sau ExtensionPay pe acest profil Chrome.</p>
+          <p class="payment-note">Secure Stripe checkout. Pro is a one-time unlock with restore options for reinstall/new device.</p>
           <button type="button" class="btn-secondary" id="restoreExtPayBtn">Restore with ExtensionPay</button>
-          <p class="crypto-note" id="restoreExtPayStatus"></p>
+          <p class="restore-note" id="restoreExtPayStatus"></p>
         </div>
 
         <!-- Restore purchase -->
         <details class="manual-verify restore-purchase" open>
-          <summary>Already paid? Restore Pro / Ai plătit deja?</summary>
-          <p class="restore-hint" id="restoreHint">One tap restores card purchases (ExtensionPay + Stripe email). Crypto: use the Crypto tab.</p>
-          <p class="restore-hint restore-hint-ro payment-note-ro">Un click restaurează plata cu cardul. Crypto: tab Crypto.</p>
-          <div class="crypto-verify">
+          <summary>Already paid? Restore Pro</summary>
+          <p class="restore-hint" id="restoreHint">Use the same Stripe receipt email or ExtensionPay login from this Chrome profile.</p>
+          <div class="restore-verify">
             <input type="email" id="restoreEmailInput" placeholder="Email from Stripe receipt (optional if saved)" autocomplete="email">
             <button class="btn-verify" id="restoreLicenseBtn">Restore purchase</button>
           </div>
-          <p class="crypto-note" id="restoreStatus"></p>
+          <p class="restore-note" id="restoreStatus"></p>
         </details>
 
-        <!-- Crypto Payment -->
-        <div class="payment-section" id="cryptoSection" style="display: none;">
-          <div class="crypto-info">
-            <div class="crypto-network">
-              <span class="network-badge">Base Network</span>
-            </div>
-            <p class="crypto-price">Send <strong>0.001 ETH</strong> or <strong>3 USDC</strong></p>
-            
-            <div class="crypto-steps">
-              <div class="crypto-step">1️⃣ Copy address below</div>
-              <div class="crypto-step">2️⃣ Open your wallet app</div>
-              <div class="crypto-step">3️⃣ Send on <strong>Base</strong> network</div>
-            </div>
-            
-            <div class="crypto-address-box">
-              <code id="cryptoAddress">0x607Fc9D41858Aa23065275043698a9262F8f9bf9</code>
-              <button class="btn-copy-large" id="copyAddressBtn">📋 Copy Address</button>
-            </div>
-          </div>
-          <details class="manual-verify" open>
-            <summary>Verify payment</summary>
-            <div class="crypto-verify">
-              <input type="email" id="cryptoEmailInput" placeholder="Your email (for license)">
-              <input type="text" id="txHashInput" placeholder="Transaction hash">
-              <button class="btn-verify" id="verifyTxBtn">Verify & Activate</button>
-            </div>
-            <p class="crypto-note" id="cryptoStatus"></p>
-          </details>
-        </div>
-
-        <p class="pro-guarantee">💚 30-day money back guarantee</p>
+        <p class="pro-guarantee">Need help with payment or restore? quicknotes.extension@gmail.com</p>
 
         <!-- Already Pro - Show actual features -->
         <div class="pro-status" id="proStatus" style="display: none;">
@@ -445,11 +468,12 @@
         <h2 id="welcomeModalTitle">Ready to capture</h2>
       </div>
       <div class="welcome-body">
-        <p class="welcome-tagline">The fastest notes extension on Chrome.</p>
+        <p class="welcome-tagline">Fast local notes for your browser workflow.</p>
         <div class="welcome-speed" id="welcomeSpeed">Loaded in --ms</div>
-        <div class="welcome-tip"><kbd>Ctrl+Enter</kbd> to save instantly</div>
+        <div class="welcome-tip">1) Create a useful first note · 2) Add a reminder · 3) Export a backup</div>
+        <div class="welcome-tip"><kbd>Ctrl+Enter</kbd> saves instantly</div>
       </div>
-      <button class="btn-primary welcome-start" id="welcomeStartBtn">Start capturing ⚡</button>
+      <button class="btn-primary welcome-start" id="welcomeStartBtn">Create first note ⚡</button>
     </div>
   </div>
 
@@ -458,7 +482,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="foldersModalTitle">📁 Manage Folders</h2>
-        <button class="btn-close" id="closeFoldersBtn">✕</button>
+        <button class="btn-close" id="closeFoldersBtn" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
         <div class="folder-input-row">
@@ -505,7 +529,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="resetPinModalTitle">⚠️ Reset PIN</h2>
-        <button class="btn-close" id="closeResetPinBtn">✕</button>
+        <button class="btn-close" id="closeResetPinBtn" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
         <p class="reset-warning">This will remove the PIN protection. Your notes will remain intact.</p>

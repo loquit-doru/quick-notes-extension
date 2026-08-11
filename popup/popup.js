@@ -1,11 +1,236 @@
-// Quick Notes - The fastest notes extension on Chrome
-// Instant capture. Zero friction. Keyboard-first.
+// Quick Notes - Local-first notes for browser workflows
+// Instant capture, keyboard-friendly, no cloud sync.
 
 import * as db from '../storage/db.js';
 import * as backup from '../storage/backup.js';
+import { runStorageMigrations } from '../storage/migrations.js';
+import { REVIEW_STATUS, getStoreReviewUrl } from '../shared/config.js';
+import { describeTrial, migrateFromStartDate, recordActiveDay } from '../shared/trial.js';
+import {
+  applyListFilters as applyListFiltersPure,
+  countNeedsReview,
+  isArchivedNote,
+  isBrowsableNote
+} from '../shared/note-filters.js';
+import { noteMatchesCurrentPage, noteMatchesCurrentDomain } from '../shared/url-utils.js';
+import { getCurrentTabContext } from '../shared/tab-context.js';
+import {
+  getAnalyticsSettings,
+  setAnalyticsEnabled,
+  trackFunnelEvent,
+  trackFunnelEventOnce
+} from '../shared/analytics.js';
 
 // ⚡ PERFORMANCE: Track load time from the very start
 const LOAD_START = performance.now();
+
+// ============================================
+// MODAL A11Y (focus trap + stack + inert)
+// ============================================
+
+function createModalA11y() {
+  const supportsInert = 'inert' in HTMLElement.prototype;
+  const stack = [];
+  const configs = new Map(); // modalEl -> { onRequestClose, initialFocusEl }
+  const openerByModal = new Map(); // modalEl -> HTMLElement | null
+
+  function isVisible(el) {
+    return !!(el && el.style && el.style.display !== 'none');
+  }
+
+  function isFocusable(el) {
+    if (!el) return false;
+    if (el.hasAttribute('disabled')) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    const style = window.getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none') return false;
+    return true;
+  }
+
+  function getFocusableElements(root) {
+    if (!root) return [];
+    const candidates = root.querySelectorAll(
+      [
+        'a[href]',
+        'area[href]',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        '[tabindex]',
+        '[contenteditable="true"]'
+      ].join(',')
+    );
+    const focusables = [];
+    for (const el of candidates) {
+      if (!isFocusable(el)) continue;
+      const tabIndex = el.getAttribute('tabindex');
+      if (tabIndex === '-1') continue;
+      // Skip elements hidden via attribute (common in menus)
+      if (el.hasAttribute('hidden')) continue;
+      focusables.push(el);
+    }
+    return focusables;
+  }
+
+  function setBackgroundInert(topModal) {
+    const bodyChildren = Array.from(document.body.children);
+    for (const child of bodyChildren) {
+      // Never touch scripts
+      if (child.tagName === 'SCRIPT') continue;
+
+      const shouldDisable = child !== topModal;
+      if (supportsInert) {
+        child.inert = shouldDisable;
+      } else {
+        if (shouldDisable) {
+          child.setAttribute('aria-hidden', 'true');
+        } else {
+          child.removeAttribute('aria-hidden');
+        }
+      }
+
+      if (shouldDisable) {
+        child.classList.add('a11y-inert');
+      } else {
+        child.classList.remove('a11y-inert');
+      }
+    }
+  }
+
+  function clearBackgroundInert() {
+    const bodyChildren = Array.from(document.body.children);
+    for (const child of bodyChildren) {
+      if (child.tagName === 'SCRIPT') continue;
+      if (supportsInert) child.inert = false;
+      child.removeAttribute('aria-hidden');
+      child.classList.remove('a11y-inert');
+    }
+  }
+
+  function getTopModal() {
+    return stack.length ? stack[stack.length - 1] : null;
+  }
+
+  function focusInitial(modalEl) {
+    const cfg = configs.get(modalEl) || {};
+    const preferred = cfg.initialFocusEl;
+    const focusables = getFocusableElements(modalEl);
+
+    const target =
+      (preferred && modalEl.contains(preferred) && isFocusable(preferred) && preferred) ||
+      (focusables.length ? focusables[0] : null);
+
+    if (target) {
+      target.focus({ preventScroll: true });
+      return;
+    }
+
+    // As a last resort, focus the modal itself.
+    if (!modalEl.hasAttribute('tabindex')) modalEl.setAttribute('tabindex', '-1');
+    modalEl.focus({ preventScroll: true });
+  }
+
+  function trapTabKey(e, modalEl) {
+    if (e.key !== 'Tab') return false;
+    const focusables = getFocusableElements(modalEl);
+    if (!focusables.length) {
+      e.preventDefault();
+      return true;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      if (active === first || !modalEl.contains(active)) {
+        e.preventDefault();
+        last.focus({ preventScroll: true });
+        return true;
+      }
+      return false;
+    }
+
+    // Forward tab
+    if (active === last || !modalEl.contains(active)) {
+      e.preventDefault();
+      first.focus({ preventScroll: true });
+      return true;
+    }
+    return false;
+  }
+
+  // Capture phase so we can stop propagation before app handlers.
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const top = getTopModal();
+      if (!top) return;
+      if (!isVisible(top)) return;
+
+      if (e.key === 'Escape') {
+        const cfg = configs.get(top);
+        if (cfg?.onRequestClose) {
+          e.preventDefault();
+          e.stopPropagation();
+          cfg.onRequestClose();
+        }
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const trapped = trapTabKey(e, top);
+        if (trapped) {
+          e.stopPropagation();
+        }
+      }
+    },
+    true
+  );
+
+  return {
+    register(modalEl, { onRequestClose, initialFocusEl } = {}) {
+      if (!modalEl) return;
+      configs.set(modalEl, { onRequestClose, initialFocusEl });
+    },
+    open(modalEl) {
+      if (!modalEl) return;
+      if (!isVisible(modalEl)) return;
+
+      openerByModal.set(modalEl, document.activeElement instanceof HTMLElement ? document.activeElement : null);
+
+      // De-dupe if already top/open.
+      const existingIdx = stack.indexOf(modalEl);
+      if (existingIdx !== -1) stack.splice(existingIdx, 1);
+      stack.push(modalEl);
+
+      setBackgroundInert(modalEl);
+      focusInitial(modalEl);
+    },
+    close(modalEl) {
+      if (!modalEl) return;
+      const idx = stack.indexOf(modalEl);
+      if (idx !== -1) stack.splice(idx, 1);
+
+      const newTop = getTopModal();
+      if (newTop) {
+        setBackgroundInert(newTop);
+        focusInitial(newTop);
+      } else {
+        clearBackgroundInert();
+      }
+
+      const opener = openerByModal.get(modalEl);
+      openerByModal.delete(modalEl);
+      if (opener && document.contains(opener) && isFocusable(opener)) {
+        opener.focus({ preventScroll: true });
+      }
+    }
+  };
+}
+
+const modalA11y = createModalA11y();
 
 // State
 let currentNote = null;
@@ -14,7 +239,11 @@ let currentContext = null;
 let isFirstRun = false;
 let isPro = false;  // Pro status - declared early for use in trial system
 let currentFolderId = 'all';  // Current folder filter
+let listViewFilter = 'default'; // default | needs-review | page | site | archived
+let trashCountCache = 0;
+let currentTabContext = null;
 let folders = [];  // All folders
+let allNotesCache = []; // full list for counts / page memory
 let enteredPin = '';  // Current PIN being entered
 let isSettingPin = false;  // Whether we're setting a new PIN
 let settings = {
@@ -25,56 +254,104 @@ let settings = {
 };
 
 // ============================================
-// 🎁 TRIAL SYSTEM (7 days full access)
+// 🎁 TRIAL SYSTEM (7 days of full access, counted in days actually used)
 // ============================================
-const TRIAL_DAYS = 7;
+const TRIAL_STATE_KEY = 'trialUsage';
 let trialInfo = {
-  startDate: null,
+  activeDays: 0,
   isTrialActive: false,
   daysRemaining: 0,
   isExpired: false
 };
 
+const ONBOARDING_STATE_KEY = 'onboardingState';
+const BACKUP_BANNER_DISMISS_KEY = 'backupBannerDismissedAt';
+const BACKUP_RECENCY_MS = 7 * 24 * 60 * 60 * 1000;
+
+// ============================================
+// ⭐ REVIEW PROMPT
+// Asked only after Quick Notes has proved useful: never on install, never while
+// someone is still evaluating it. Store ranking rewards ratings, but a prompt
+// shown too early costs a bad one.
+// ============================================
+const FIRST_USE_KEY = 'firstUseAt';
+const REVIEW_PROMPT_STATE_KEY = 'reviewPromptState';
+const REVIEW_MIN_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const REVIEW_MIN_NOTES = 5;
+const REVIEW_SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
+const REVIEW_MAX_SNOOZES = 2;
+let onboardingState = {
+  firstNoteSaved: false,
+  reminderCreated: false,
+  backupNudged: false,
+};
+
+async function loadOnboardingState() {
+  const stored = await chrome.storage.local.get([ONBOARDING_STATE_KEY]);
+  onboardingState = {
+    ...onboardingState,
+    ...(stored[ONBOARDING_STATE_KEY] || {}),
+  };
+}
+
+async function saveOnboardingState(patch) {
+  onboardingState = { ...onboardingState, ...patch };
+  await chrome.storage.local.set({ [ONBOARDING_STATE_KEY]: onboardingState });
+}
+
+function hasMeaningfulNoteContent(title, content) {
+  const hasTitle = (title || '').trim() && (title || '').trim().toLowerCase() !== 'untitled';
+  const textLength = (content || '').replace(/<[^>]*>/g, '').trim().length;
+  return Boolean(hasTitle || textLength >= 12);
+}
+
 async function initTrialSystem() {
-  const stored = await chrome.storage.local.get(['trialStartDate', 'proUnlocked']);
-  
+  const stored = await chrome.storage.local.get([
+    TRIAL_STATE_KEY,
+    'trialStartDate',
+    'proUnlocked'
+  ]);
+
   // If Pro, no trial needed
   if (stored.proUnlocked) {
     trialInfo.isTrialActive = false;
     trialInfo.isExpired = false;
     return;
   }
-  
-  // First time? Start trial
-  if (!stored.trialStartDate) {
-    const now = Date.now();
-    await chrome.storage.local.set({ trialStartDate: now });
-    trialInfo.startDate = now;
-  } else {
-    trialInfo.startDate = stored.trialStartDate;
+
+  // Self-migrating rather than handled in storage/migrations.js, because this runs
+  // before runStorageMigrations() during init and the order is not worth disturbing.
+  const existing = stored[TRIAL_STATE_KEY] || migrateFromStartDate(stored.trialStartDate);
+
+  const next = recordActiveDay(existing);
+  if (next.changed) {
+    await chrome.storage.local.set({
+      [TRIAL_STATE_KEY]: { activeDays: next.activeDays, lastActiveDay: next.lastActiveDay }
+    });
+    if (next.activeDays === 1) {
+      await trackFunnelEvent('trial_started', { source: 'popup' });
+    }
   }
-  
-  // Calculate trial status
-  const elapsed = Date.now() - trialInfo.startDate;
-  const daysElapsed = Math.floor(elapsed / (1000 * 60 * 60 * 24));
-  trialInfo.daysRemaining = Math.max(0, TRIAL_DAYS - daysElapsed);
-  trialInfo.isTrialActive = trialInfo.daysRemaining > 0;
-  trialInfo.isExpired = trialInfo.daysRemaining === 0;
+
+  const status = describeTrial(next);
+  trialInfo.activeDays = status.activeDays;
+  trialInfo.daysRemaining = status.daysRemaining;
+  trialInfo.isTrialActive = status.isTrialActive;
+  trialInfo.isExpired = status.isExpired;
 }
 
 // ============================================
 // 🔒 FREE vs PRO LIMITS (used after trial)
 // ============================================
 const FREE_LIMITS = {
-  maxNotes: 5,
-  maxCharsPerNote: 500,
+  maxNotes: 10,
   canSearch: false,
   canExport: true  // Export is FREE - builds trust!
 };
 
 function showLimitWarning(message) {
   showToast(message + ' ✨ Upgrade to Pro');
-  openProModal();
+  openProModal('limits');
 }
 
 // ============================================
@@ -93,20 +370,23 @@ function updateTrialBanner() {
   if (trialInfo.isTrialActive) {
     elements.trialBanner.style.display = 'flex';
     elements.trialBanner.className = 'trial-banner active';
+    // "Trial days" rather than "days": the counter only moves on days it is used,
+    // and the tooltip says so instead of letting people assume a wall clock.
+    elements.trialBanner.title = 'Trial days count only the days you open Quick Notes.';
     if (elements.trialDays) {
       if (trialInfo.daysRemaining === 1) {
-        elements.trialDays.textContent = '⏰ Last day of trial!';
+        elements.trialDays.textContent = 'Last trial day';
       } else {
-        elements.trialDays.textContent = `🎁 ${trialInfo.daysRemaining} days left in trial`;
+        elements.trialDays.textContent = `${trialInfo.daysRemaining} trial days left`;
       }
     }
-  } 
+  }
   // Trial expired - show upgrade prompt
   else if (trialInfo.isExpired) {
     elements.trialBanner.style.display = 'flex';
     elements.trialBanner.className = 'trial-banner expired';
     if (elements.trialDays) {
-      elements.trialDays.textContent = '✨ Trial ended — upgrade for unlimited notes, search & folders';
+      elements.trialDays.textContent = 'Trial ended. Keep free limits or upgrade if you need unlimited notes and folders.';
     }
   }
 }
@@ -116,7 +396,6 @@ function getCurrentLimits() {
   if (isPro || trialInfo.isTrialActive) {
     return {
       maxNotes: Infinity,
-      maxCharsPerNote: Infinity,
       canSearch: true,
       canExport: true
     };
@@ -135,7 +414,7 @@ function updateFolderAccessUI() {
   if (folderFilter) folderFilter.style.display = allowed ? '' : 'none';
   if (noteFolderRow) noteFolderRow.style.display = allowed ? '' : 'none';
   if (elements.manageFoldersBtn) {
-    elements.manageFoldersBtn.title = allowed ? 'Manage folders' : 'Folders (Pro)';
+    elements.manageFoldersBtn.title = allowed ? 'More' : 'More';
   }
 }
 
@@ -155,13 +434,22 @@ function updateTrashInfoLabel() {
 function showView(view) {
   const searchContainer = document.getElementById('searchContainer');
   const folderFilter = document.getElementById('folderFilter');
+  const popupPrimaryAction = document.getElementById('popupPrimaryAction');
   const isListView = view === 'list';
 
   if (elements.listView) elements.listView.style.display = view === 'list' ? 'block' : 'none';
   if (elements.editorView) elements.editorView.style.display = view === 'editor' ? 'block' : 'none';
   if (elements.trashView) elements.trashView.style.display = view === 'trash' ? 'block' : 'none';
 
+  if (popupPrimaryAction) popupPrimaryAction.style.display = isListView ? 'block' : 'none';
   if (searchContainer) searchContainer.style.display = isListView ? 'block' : 'none';
+  if (elements.pageMemorySection) {
+    if (!isListView) {
+      elements.pageMemorySection.hidden = true;
+    } else {
+      updatePageMemoryUI();
+    }
+  }
   if (folderFilter) folderFilter.style.display = isListView ? 'flex' : 'none';
   if (elements.shortcutsFooter) elements.shortcutsFooter.style.display = isListView ? 'flex' : 'none';
 }
@@ -214,7 +502,7 @@ function initDomElements() {
     fastModeToggle: document.getElementById('fastModeToggle'),
     includeContextToggle: document.getElementById('includeContextToggle'),
     quickAddToggle: document.getElementById('quickAddToggle'),
-    speedBadge: document.getElementById('speedBadge'),
+    analyticsToggle: document.getElementById('analyticsToggle'),
     shortcutsFooter: document.getElementById('shortcutsFooter'),
     // Context
     contextInfo: document.getElementById('contextInfo'),
@@ -236,8 +524,6 @@ function initDomElements() {
     welcomeSpeed: document.getElementById('welcomeSpeed'),
     welcomeStartBtn: document.getElementById('welcomeStartBtn'),
     // Trash
-    trashToggleBtn: document.getElementById('trashToggleBtn'),
-    trashCount: document.getElementById('trashCount'),
     trashList: document.getElementById('trashList'),
     trashBackBtn: document.getElementById('trashBackBtn'),
     emptyTrashBtn: document.getElementById('emptyTrashBtn'),
@@ -246,8 +532,23 @@ function initDomElements() {
     trialBanner: document.getElementById('trialBanner'),
     trialDays: document.getElementById('trialDays'),
     trialUpgradeBtn: document.getElementById('trialUpgradeBtn'),
+    backupSafetyBanner: document.getElementById('backupSafetyBanner'),
+    backupSafetyActionBtn: document.getElementById('backupSafetyActionBtn'),
+    reviewBanner: document.getElementById('reviewBanner'),
+    reviewBannerActionBtn: document.getElementById('reviewBannerActionBtn'),
+    reviewBannerDismissBtn: document.getElementById('reviewBannerDismissBtn'),
+    backupSafetyDismissBtn: document.getElementById('backupSafetyDismissBtn'),
     // Folders
+    pageMemorySection: document.getElementById('pageMemorySection'),
+    pageMemoryStats: document.getElementById('pageMemoryStats'),
+    showPageNotesBtn: document.getElementById('showPageNotesBtn'),
+    showSiteNotesBtn: document.getElementById('showSiteNotesBtn'),
+    emptyStateIcon: document.getElementById('emptyStateIcon'),
+    emptyStateText: document.getElementById('emptyStateText'),
+    emptyStateSubtext: document.getElementById('emptyStateSubtext'),
     folderPills: document.getElementById('folderPills'),
+    listFilterMenu: document.getElementById('listFilterMenu'),
+    listFilterMoreWrap: document.getElementById('listFilterMoreWrap'),
     manageFoldersBtn: document.getElementById('manageFoldersBtn'),
     noteFolderSelect: document.getElementById('noteFolderSelect'),
     foldersModal: document.getElementById('foldersModal'),
@@ -304,6 +605,9 @@ async function awaitExtensionPayProCheck() {
     loadingTimer = setTimeout(() => setProCheckLoading(true), 120);
     const result = await window.QuickNotesPro.checkExtensionPayPro();
     if (result.unlocked) {
+      if (!isPro) {
+        await trackFunnelEvent('purchase_restored', { source: result.source || 'auto_check' });
+      }
       isPro = true;
       applyProUnlockedUi();
     }
@@ -315,6 +619,7 @@ async function awaitExtensionPayProCheck() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initDomElements();
+  initModalA11y();
   
   // Clear reminder badge when popup opens
   chrome.action.setBadgeText({ text: '' });
@@ -335,6 +640,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initializeApp() {
   // ExtensionPay before trial limits / paywall UI
   await awaitExtensionPayProCheck();
+  await loadOnboardingState();
 
   // Check if first run
   const stored = await chrome.storage.local.get(['hasLaunched']);
@@ -347,14 +653,23 @@ async function initializeApp() {
   await checkOpenFromNotification();
   
   await loadSettings();
+  await runStorageMigrations();
   updateAppVersionFooter();
+  await refreshCurrentTabContext();
   await loadFolders();
   await loadNotes();
+  await setupAnalyticsControls();
+  updatePageMemoryUI();
+  updateReviewFilterUI();
   await updateTrashButton();
   await maybeOfferLocalBackupRestore();
+  await trackFunnelEventOnce('first_open', 'first_open', { source: isFirstRun ? 'welcome' : 'popup' });
   setupEventListeners();
   setupBackupListeners();
-  updateBackupUI();
+  await updateBackupUI();
+  await updateBackupSafetyBanner();
+  await ensureFirstUseTimestamp();
+  await updateReviewBanner();
   setupToolbar();
   setupKeyboardShortcuts();
   setupFoldersAndPinListeners();
@@ -370,13 +685,7 @@ async function initializeApp() {
   updateFolderAccessUI();
   updateTrashInfoLabel();
 
-  // ⚡ Display load time - THE USP
   const loadTime = performance.now() - LOAD_START;
-  if (elements.speedBadge) {
-    elements.speedBadge.textContent = `${Math.round(loadTime)}ms`;
-    elements.speedBadge.title = `Loaded in ${loadTime.toFixed(1)}ms`;
-  }
-
   console.log(`⚡ Quick Notes loaded in ${loadTime.toFixed(1)}ms`);
 
   // 🎉 FIRST RUN EXPERIENCE - THE WOW MOMENT
@@ -386,6 +695,33 @@ async function initializeApp() {
     // Quick Add Mode - go directly to editor
     await createNewNote();
   }
+}
+
+function initModalA11y() {
+  modalA11y.register(elements.settingsModal, {
+    onRequestClose: () => closeSettings(),
+    initialFocusEl: elements.closeSettingsBtn
+  });
+  modalA11y.register(elements.reminderModal, {
+    onRequestClose: () => closeReminderModal(),
+    initialFocusEl: elements.closeReminderBtn
+  });
+  modalA11y.register(document.getElementById('proModal'), {
+    onRequestClose: () => closeProModal(),
+    initialFocusEl: document.getElementById('closeProBtn')
+  });
+  modalA11y.register(elements.welcomeModal, {
+    onRequestClose: () => dismissWelcome(),
+    initialFocusEl: elements.welcomeStartBtn
+  });
+  modalA11y.register(elements.foldersModal, {
+    onRequestClose: () => closeFoldersModal(),
+    initialFocusEl: elements.closeFoldersBtn
+  });
+  modalA11y.register(elements.resetPinModal, {
+    onRequestClose: () => closeResetPinModal(),
+    initialFocusEl: elements.closeResetPinBtn
+  });
 }
 
 // ============================================
@@ -398,13 +734,16 @@ function showWelcome(loadTime) {
   }
   if (elements.welcomeModal) {
     elements.welcomeModal.style.display = 'flex';
+    modalA11y.open(elements.welcomeModal);
   }
 }
 
 async function dismissWelcome() {
   if (elements.welcomeModal) {
+    modalA11y.close(elements.welcomeModal);
     elements.welcomeModal.style.display = 'none';
   }
+  await trackFunnelEvent('onboarding_started', { source: 'welcome_modal' });
   // Mark as launched
   await chrome.storage.local.set({ hasLaunched: true });
   // Go directly to editor for first note!
@@ -455,12 +794,162 @@ function updateAppVersionFooter() {
 // ============================================
 
 async function loadNotes() {
+  allNotesCache = await db.getAllNotes();
+  syncNotesFromPrimaryFilters();
+  renderFromPrimaryFilters();
+  updateBackupSafetyBanner();
+}
+
+/** Rebuild `notes` from folder + full cache (before list-view filters). */
+function syncNotesFromPrimaryFilters() {
   if (currentFolderId && currentFolderId !== 'all') {
-    notes = await db.getNotesByFolder(currentFolderId);
+    notes = allNotesCache.filter((n) => n.folderId === currentFolderId);
   } else {
-    notes = await db.getAllNotes();
+    notes = [...allNotesCache];
   }
-  renderNotesList();
+}
+
+function renderFromPrimaryFilters() {
+  if (elements.searchInput?.value.trim()) {
+    searchNotes(elements.searchInput.value);
+  } else {
+    applyListFiltersAndRender();
+  }
+  updatePageMemoryUI();
+  updateReviewFilterUI();
+}
+
+/**
+ * Mutually exclusive primary list views (All / Inbox / Personal / Work / Archived).
+ * Page/site memory filters use setListViewFilter directly.
+ */
+function applyPrimaryListFilter(primary) {
+  switch (primary) {
+    case 'all':
+      currentFolderId = 'all';
+      listViewFilter = 'default';
+      break;
+    case 'needs-review':
+      currentFolderId = 'all';
+      listViewFilter = 'needs-review';
+      break;
+    case 'personal':
+      currentFolderId = 'personal';
+      listViewFilter = 'default';
+      break;
+    case 'work':
+      currentFolderId = 'work';
+      listViewFilter = 'default';
+      break;
+    case 'archived':
+      currentFolderId = 'all';
+      listViewFilter = 'archived';
+      break;
+    default:
+      break;
+  }
+  syncNotesFromPrimaryFilters();
+  renderFromPrimaryFilters();
+}
+
+function applyListFilters(noteList) {
+  return applyListFiltersPure(noteList, {
+    listViewFilter,
+    tabContext: currentTabContext
+  });
+}
+
+function applyListFiltersAndRender(filteredOverride = null) {
+  const base = filteredOverride ?? notes;
+  const display = applyListFilters(base);
+  renderNotesList(display);
+  updateEmptyStateForFilter(display);
+}
+
+async function refreshCurrentTabContext() {
+  currentTabContext = await getCurrentTabContext();
+}
+
+function getPageMemoryCounts() {
+  if (!currentTabContext?.url) return { page: 0, site: 0 };
+  const browsable = allNotesCache.filter(isBrowsableNote);
+  return {
+    page: browsable.filter((n) => noteMatchesCurrentPage(n, currentTabContext)).length,
+    site: browsable.filter((n) => noteMatchesCurrentDomain(n, currentTabContext)).length
+  };
+}
+
+function updatePageMemoryUI() {
+  const section = elements.pageMemorySection;
+  if (!section) return;
+
+  const { page, site } = getPageMemoryCounts();
+  const hasRelated = page > 0 || site > 0;
+
+  if (!hasRelated || !currentTabContext) {
+    section.hidden = true;
+    return;
+  }
+
+  section.hidden = false;
+  if (elements.pageMemoryStats) {
+    const pageLabel = page === 1 ? '1 on this page' : `${page} on this page`;
+    const siteLabel = site === 1 ? '1 on this site' : `${site} on this site`;
+    elements.pageMemoryStats.textContent = `${pageLabel} · ${siteLabel}`;
+  }
+
+  if (elements.showPageNotesBtn) {
+    elements.showPageNotesBtn.classList.toggle('active', listViewFilter === 'page');
+    elements.showPageNotesBtn.disabled = page === 0;
+  }
+  if (elements.showSiteNotesBtn) {
+    elements.showSiteNotesBtn.classList.toggle('active', listViewFilter === 'site');
+    elements.showSiteNotesBtn.disabled = site === 0;
+  }
+}
+
+function updateReviewFilterUI() {
+  updateFolderUI();
+}
+
+function updateEmptyStateForFilter(displayNotes) {
+  if (!elements.emptyState) return;
+  if (displayNotes.length > 0) return;
+
+  if (listViewFilter === 'needs-review') {
+    if (elements.emptyStateIcon) elements.emptyStateIcon.textContent = '📥';
+    if (elements.emptyStateText) elements.emptyStateText.textContent = 'Inbox is empty';
+    if (elements.emptyStateSubtext) elements.emptyStateSubtext.textContent = 'No new notes';
+    return;
+  }
+
+  if (listViewFilter === 'archived') {
+    if (elements.emptyStateIcon) elements.emptyStateIcon.textContent = '📦';
+    if (elements.emptyStateText) elements.emptyStateText.textContent = 'No archived notes';
+    if (elements.emptyStateSubtext) elements.emptyStateSubtext.textContent = '';
+    return;
+  }
+
+  if (listViewFilter === 'page' || listViewFilter === 'site') {
+    if (elements.emptyStateIcon) elements.emptyStateIcon.textContent = '🔖';
+    if (elements.emptyStateText) {
+      elements.emptyStateText.textContent =
+        listViewFilter === 'page' ? 'No notes for this page' : 'No notes from this site';
+    }
+    if (elements.emptyStateSubtext) elements.emptyStateSubtext.textContent = '';
+    return;
+  }
+
+  if (elements.emptyStateIcon) elements.emptyStateIcon.textContent = '⚡';
+  if (elements.emptyStateText) elements.emptyStateText.textContent = 'Capture your first thought';
+  if (elements.emptyStateSubtext) {
+    elements.emptyStateSubtext.innerHTML = 'Press <kbd>Ctrl+N</kbd> or click New Note';
+  }
+}
+
+function setListViewFilter(filter) {
+  listViewFilter = filter;
+  renderFromPrimaryFilters();
 }
 
 function updateNotesLimitIndicator() {
@@ -476,7 +965,8 @@ function updateNotesLimitIndicator() {
   }
   
   // After trial - show limits
-  const remaining = limits.maxNotes - notes.length;
+  const activeCount = allNotesCache.filter(isBrowsableNote).length;
+  const remaining = limits.maxNotes - activeCount;
   if (remaining <= 3 && remaining > 0) {
     limitIndicator.textContent = remaining + ' notes left';
     limitIndicator.className = 'limit-indicator warning';
@@ -485,7 +975,7 @@ function updateNotesLimitIndicator() {
     limitIndicator.textContent = 'Limit reached! ✨ Upgrade';
     limitIndicator.className = 'limit-indicator exceeded';
     limitIndicator.style.display = 'block';
-    limitIndicator.onclick = openProModal;
+    limitIndicator.onclick = () => openProModal('limit_indicator');
   } else {
     limitIndicator.style.display = 'none';
   }
@@ -493,11 +983,12 @@ function updateNotesLimitIndicator() {
 function renderNotesList(filteredNotes = null) {
   // 🔒 Show notes limit indicator for free users
   updateNotesLimitIndicator();
-  const displayNotes = filteredNotes || notes;
+  const displayNotes = filteredNotes ?? applyListFilters(notes);
 
   if (displayNotes.length === 0) {
     if (elements.notesList) elements.notesList.innerHTML = '';
     if (elements.emptyState) elements.emptyState.style.display = 'block';
+    updateEmptyStateForFilter(displayNotes);
     return;
   }
 
@@ -507,21 +998,29 @@ function renderNotesList(filteredNotes = null) {
     elements.notesList.innerHTML = displayNotes.map(note => {
       const hasContext = note.contextUrl && note.contextUrl.length > 0;
       const hasReminder = note.reminder && note.reminder.time && !note.reminder.notified;
+      const isNew = note.reviewStatus === REVIEW_STATUS.NEW;
+      const isArchived = isArchivedNote(note);
+      const showDoneBtn = isNew && !isArchived;
+
       return `
-        <div class="note-card ${note.pinned ? 'pinned' : ''}" data-id="${note.id}">
+        <div class="note-card ${note.pinned ? 'pinned' : ''}${showDoneBtn ? ' note-card--inbox' : ''}" data-id="${note.id}">
           <div class="note-card-header">
             <div class="note-card-title">
               ${note.pinned ? '<span class="pin-icon">📌</span>' : ''}
               ${hasReminder ? '<span class="reminder-icon" title="Reminder set">⏰</span>' : ''}
-              ${escapeHtml(note.title || 'Untitled')}
+              ${escapeHtml(getNoteCardTitle(note))}
             </div>
-            <button class="btn-copy-note" data-id="${note.id}" title="Copy to clipboard">📋</button>
+            <div class="note-card-actions">
+              ${showDoneBtn ? `<button type="button" class="btn-note-done" data-id="${note.id}" title="Mark done" aria-label="Mark done">Done</button>` : ''}
+              <button type="button" class="btn-note-menu" data-id="${note.id}" title="More actions" aria-label="More actions">⋯</button>
+              <button class="btn-copy-note" data-id="${note.id}" title="Copy to clipboard">📋</button>
+            </div>
           </div>
           <div class="note-card-preview ${!getPreview(note.content) ? 'note-card-preview--empty' : ''}">${getPreview(note.content) || 'No content'}</div>
           ${hasContext ? `
             <div class="note-card-context">
               ${note.contextFavicon ? `<img src="${note.contextFavicon}" alt="">` : '🔗'}
-              <span>${getDomain(note.contextUrl)}</span>
+              <span>${escapeHtml(getDomain(note.contextUrl))}</span>
             </div>
           ` : ''}
           <div class="note-card-date">${formatDate(note.updatedAt)}</div>
@@ -529,24 +1028,112 @@ function renderNotesList(filteredNotes = null) {
       `;
     }).join('');
 
-    // Add click handlers for cards
+    closeAllNoteMenus();
+
     elements.notesList.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        // Don't open if clicking copy button
-        if (e.target.closest('.btn-copy-note')) return;
+        if (e.target.closest('.btn-copy-note, .btn-note-menu, .btn-note-done, .note-card-menu')) return;
         openNote(card.dataset.id);
       });
     });
 
-    // 🔥 VIRAL FEATURE: Copy button handlers
     elements.notesList.querySelectorAll('.btn-copy-note').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         copyNoteToClipboard(btn.dataset.id);
       });
     });
+
+    elements.notesList.querySelectorAll('.btn-note-menu').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleNoteCardMenu(btn);
+      });
+    });
+
+    elements.notesList.querySelectorAll('.btn-note-done').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await handleNoteReviewAction('mark-reviewed', btn.dataset.id);
+      });
+    });
   }
 }
+
+let openNoteMenuEl = null;
+
+function closeAllNoteMenus() {
+  if (openNoteMenuEl) {
+    openNoteMenuEl.remove();
+    openNoteMenuEl = null;
+  }
+}
+
+function toggleNoteCardMenu(btn) {
+  const noteId = btn.dataset.id;
+  const note = allNotesCache.find((n) => n.id === noteId);
+  if (!note) return;
+
+  if (openNoteMenuEl?.dataset.noteId === noteId) {
+    closeAllNoteMenus();
+    return;
+  }
+  closeAllNoteMenus();
+
+  const menu = document.createElement('div');
+  menu.className = 'note-card-menu';
+  menu.dataset.noteId = noteId;
+
+  const items = [];
+  if (note.reviewStatus === REVIEW_STATUS.NEW && !isArchivedNote(note)) {
+    items.push({ action: 'mark-reviewed', label: 'Done' });
+  }
+  if (!isArchivedNote(note)) {
+    items.push({ action: 'archive', label: 'Archive' });
+  } else {
+    items.push({ action: 'restore', label: 'Restore' });
+  }
+
+  menu.innerHTML = items
+    .map(
+      (item) =>
+        `<button type="button" data-action="${item.action}" data-id="${noteId}">${item.label}</button>`
+    )
+    .join('');
+
+  const card = btn.closest('.note-card');
+  if (card) card.appendChild(menu);
+  openNoteMenuEl = menu;
+
+  menu.querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await handleNoteReviewAction(b.dataset.action, b.dataset.id);
+      closeAllNoteMenus();
+    });
+  });
+}
+
+async function handleNoteReviewAction(action, noteId) {
+  if (action === 'mark-reviewed') {
+    await db.updateNote(noteId, { reviewStatus: REVIEW_STATUS.REVIEWED });
+    showToast('Done');
+  } else if (action === 'archive') {
+    await db.updateNote(noteId, { reviewStatus: REVIEW_STATUS.ARCHIVED });
+    showToast('Note archived');
+  } else if (action === 'restore') {
+    await db.updateNote(noteId, { reviewStatus: REVIEW_STATUS.REVIEWED });
+    showToast('Note restored');
+    await loadNotes();
+    if (listViewFilter === 'archived') {
+      applyPrimaryListFilter('all');
+    }
+    return;
+  }
+  await loadNotes();
+}
+
+document.addEventListener('click', () => closeAllNoteMenus());
 
 // 🔥 COPY NOTE TO CLIPBOARD - THE VIRAL FEATURE
 async function copyNoteToClipboard(noteId) {
@@ -609,44 +1196,51 @@ function showToast(message, { undoFn = null, duration = 2000 } = {}) {
 async function createNewNote() {
   // 🔒 LIMIT CHECK: Pro, trial, or within free limits
   const limits = getCurrentLimits();
-  if (!isPro && !trialInfo.isTrialActive && notes.length >= limits.maxNotes) {
+  const activeCount = allNotesCache.filter(isBrowsableNote).length;
+  if (!isPro && !trialInfo.isTrialActive && activeCount >= limits.maxNotes) {
     showLimitWarning('Free limit: ' + limits.maxNotes + ' notes');
     return;
   }
   
-  // Get context from current tab if enabled
   if (settings.includeContext) {
-    try {
-      currentContext = await chrome.runtime.sendMessage({ action: 'getContext' });
-    } catch (e) {
-      currentContext = null;
+    currentContext = await getCurrentTabContext();
+    if (currentContext) {
+      currentTabContext = currentContext;
     }
   } else {
     currentContext = null;
   }
 
-  // Create note in current folder (unless it's "all")
   const folderId = (canUseFolders() && currentFolderId !== 'all') ? currentFolderId : null;
   currentNote = await db.createNote('', 'Untitled', folderId);
+  await trackFunnelEvent('note_created', { source: isFirstRun ? 'onboarding' : 'manual' });
 
   // Add context to note
-  if (currentContext && currentContext.url && !currentContext.url.startsWith('chrome://')) {
+  if (currentContext?.url) {
     currentNote.contextUrl = currentContext.url;
     currentNote.contextTitle = currentContext.title;
-    currentNote.contextFavicon = currentContext.favIconUrl;
+    currentNote.contextFavicon = currentContext.favicon;
     await db.updateNote(currentNote.id, {
       contextUrl: currentContext.url,
       contextTitle: currentContext.title,
-      contextFavicon: currentContext.favIconUrl
+      contextFavicon: currentContext.favicon
     });
   }
 
-  notes.unshift(currentNote);
+  if (listViewFilter !== 'default' && listViewFilter !== 'needs-review') {
+    setListViewFilter('default');
+  }
+
+  await loadNotes();
   openEditor();
 
   if (elements.noteTitleInput) {
     elements.noteTitleInput.focus();
     elements.noteTitleInput.select();
+  }
+
+  if (isFirstRun) {
+    showToast('Step 1/3: Write one useful note, then press Ctrl+Enter.');
   }
 }
 
@@ -654,11 +1248,11 @@ async function openNote(id) {
   currentNote = await db.getNote(id);
   if (!currentNote) return;
 
-  // Restore context from note
   if (currentNote.contextUrl) {
     currentContext = {
       url: currentNote.contextUrl,
       title: currentNote.contextTitle,
+      favicon: currentNote.contextFavicon,
       favIconUrl: currentNote.contextFavicon
     };
   } else {
@@ -740,15 +1334,6 @@ async function saveCurrentNote() {
     (tags || '') + (spaces || '') + letter.toUpperCase()
   );
 
-  const limits = getCurrentLimits();
-  if (limits.maxCharsPerNote !== Infinity && elements.noteContentEditor) {
-    const charCount = (elements.noteContentEditor.textContent || '').length;
-    if (charCount > limits.maxCharsPerNote) {
-      showLimitWarning(`${limits.maxCharsPerNote} character limit reached`);
-      return;
-    }
-  }
-
   // Verify note still exists before saving
   const existingNote = await db.getNote(noteToSave.id);
   if (!existingNote) {
@@ -761,6 +1346,13 @@ async function saveCurrentNote() {
     currentNote.title = title;
     currentNote.content = content;
   }
+
+  if (!onboardingState.firstNoteSaved && hasMeaningfulNoteContent(title, content)) {
+    await saveOnboardingState({ firstNoteSaved: true });
+    await trackFunnelEventOnce('first_note', 'first_note', { source: isFirstRun ? 'onboarding' : 'editor' });
+    showToast('Step 2/3: Add a reminder with the bell icon so this note becomes actionable.');
+  }
+
   backup.scheduleAutoBackup(isPro);
 }
 
@@ -774,8 +1366,9 @@ function updateContextInfo() {
   if (currentContext && currentContext.url && !currentContext.url.startsWith('chrome://')) {
     elements.contextInfo.style.display = 'flex';
 
-    if (elements.contextFavicon && currentContext.favIconUrl) {
-      elements.contextFavicon.src = currentContext.favIconUrl;
+    const fav = currentContext.favicon || currentContext.favIconUrl;
+    if (elements.contextFavicon && fav) {
+      elements.contextFavicon.src = fav;
       elements.contextFavicon.style.display = 'block';
     } else if (elements.contextFavicon) {
       elements.contextFavicon.style.display = 'none';
@@ -905,18 +1498,8 @@ async function deleteNote() {
 
 async function updateTrashButton() {
   const trash = await db.getTrash(isPro);
-  const count = trash.length;
-  
-  if (elements.trashToggleBtn) {
-    if (count > 0) {
-      elements.trashToggleBtn.style.display = 'flex';
-      if (elements.trashCount) {
-        elements.trashCount.textContent = count;
-      }
-    } else {
-      elements.trashToggleBtn.style.display = 'none';
-    }
-  }
+  trashCountCache = trash.length;
+  updateFolderUI();
 }
 
 async function openTrash() {
@@ -1006,8 +1589,11 @@ async function emptyTrash() {
 
 async function searchNotes(query) {
   if (!query.trim()) {
-    renderNotesList();
+    syncNotesFromPrimaryFilters();
+    applyListFiltersAndRender();
     if (elements.clearSearch) elements.clearSearch.style.display = 'none';
+    updatePageMemoryUI();
+    updateReviewFilterUI();
     return;
   }
 
@@ -1021,8 +1607,16 @@ async function searchNotes(query) {
 
   if (elements.clearSearch) elements.clearSearch.style.display = 'block';
 
-  const filtered = await db.searchNotes(query);
-  renderNotesList(filtered);
+  const searched = await db.searchNotes(query);
+  const scopeByFolder =
+    listViewFilter !== 'needs-review' &&
+    listViewFilter !== 'archived' &&
+    currentFolderId &&
+    currentFolderId !== 'all';
+  const scoped = scopeByFolder
+    ? searched.filter((n) => n.folderId === currentFolderId)
+    : searched;
+  applyListFiltersAndRender(scoped);
 }
 
 // ============================================
@@ -1152,13 +1746,51 @@ function setupEventListeners() {
   });
 
   // Trash
-  if (elements.trashToggleBtn) elements.trashToggleBtn.addEventListener('click', openTrash);
   if (elements.trashBackBtn) elements.trashBackBtn.addEventListener('click', closeTrash);
   if (elements.emptyTrashBtn) elements.emptyTrashBtn.addEventListener('click', emptyTrash);
 
   // Trial upgrade button
   if (elements.trialUpgradeBtn) {
-    elements.trialUpgradeBtn.addEventListener('click', openProModal);
+    elements.trialUpgradeBtn.addEventListener('click', () => openProModal('trial_banner'));
+  }
+
+  if (elements.backupSafetyActionBtn) {
+    elements.backupSafetyActionBtn.addEventListener('click', () => {
+      openSettings();
+      trackFunnelEvent('backup_nudge_clicked', { source: 'banner' });
+    });
+  }
+
+  if (elements.backupSafetyDismissBtn) {
+    elements.backupSafetyDismissBtn.addEventListener('click', async () => {
+      await chrome.storage.local.set({ [BACKUP_BANNER_DISMISS_KEY]: Date.now() });
+      await trackFunnelEvent('backup_nudge_dismissed', { source: 'banner' });
+      await updateBackupSafetyBanner();
+      await updateReviewBanner();
+    });
+  }
+
+  if (elements.reviewBannerActionBtn) {
+    elements.reviewBannerActionBtn.addEventListener('click', async () => {
+      const url = getStoreReviewUrl(chrome.runtime?.id, navigator.userAgent);
+      // Asked once and answered — never bring it up again, whatever they rate.
+      await writeReviewPromptState({ done: true });
+      await trackFunnelEvent('review_prompt_clicked', { source: 'banner' });
+      await updateReviewBanner();
+      if (url) chrome.tabs.create({ url });
+    });
+  }
+
+  if (elements.reviewBannerDismissBtn) {
+    elements.reviewBannerDismissBtn.addEventListener('click', async () => {
+      const { snoozes } = await readReviewPromptState();
+      await writeReviewPromptState({
+        snoozes: snoozes + 1,
+        snoozedUntil: Date.now() + REVIEW_SNOOZE_MS
+      });
+      await trackFunnelEvent('review_prompt_dismissed', { snoozes: snoozes + 1 });
+      await updateReviewBanner();
+    });
   }
 
   // Remove context
@@ -1183,6 +1815,16 @@ function setupEventListeners() {
     });
   }
 
+  if (elements.showPageNotesBtn) {
+    elements.showPageNotesBtn.addEventListener('click', () => {
+      setListViewFilter(listViewFilter === 'page' ? 'default' : 'page');
+    });
+  }
+  if (elements.showSiteNotesBtn) {
+    elements.showSiteNotesBtn.addEventListener('click', () => {
+      setListViewFilter(listViewFilter === 'site' ? 'default' : 'site');
+    });
+  }
   // Settings
   if (elements.settingsBtn) elements.settingsBtn.addEventListener('click', openSettings);
   if (elements.closeSettingsBtn) elements.closeSettingsBtn.addEventListener('click', closeSettings);
@@ -1251,12 +1893,128 @@ function setupEventListeners() {
 // ============================================
 
 function openSettings() {
-  if (elements.settingsModal) elements.settingsModal.style.display = 'flex';
+  if (elements.settingsModal) {
+    elements.settingsModal.style.display = 'flex';
+    modalA11y.open(elements.settingsModal);
+  }
   updateBackupUI();
+  updateBackupSafetyBanner();
 }
 
 function closeSettings() {
-  if (elements.settingsModal) elements.settingsModal.style.display = 'none';
+  if (elements.settingsModal) {
+    modalA11y.close(elements.settingsModal);
+    elements.settingsModal.style.display = 'none';
+  }
+}
+
+async function setupAnalyticsControls() {
+  if (!elements.analyticsToggle) return;
+  const settings = await getAnalyticsSettings();
+  elements.analyticsToggle.checked = settings.enabled !== false;
+  elements.analyticsToggle.addEventListener('change', async () => {
+    const next = elements.analyticsToggle.checked;
+    await setAnalyticsEnabled(next);
+    await trackFunnelEvent('analytics_setting_changed', {
+      enabled: next,
+      source: 'settings',
+    });
+    showToast(
+      next
+        ? 'Local usage insights enabled (stored on this device only).'
+        : 'Local usage insights disabled.'
+    );
+  });
+}
+
+async function markManualBackupCreated(source) {
+  await chrome.storage.local.set({ lastManualBackupAt: Date.now() });
+  await trackFunnelEvent('backup_exported', { source });
+}
+
+async function updateBackupSafetyBanner() {
+  if (!elements.backupSafetyBanner) return;
+
+  const [backupState, dismissedState] = await Promise.all([
+    chrome.storage.local.get(['lastManualBackupAt']),
+    chrome.storage.local.get([BACKUP_BANNER_DISMISS_KEY]),
+  ]);
+
+  const hasNotes = allNotesCache.filter(isBrowsableNote).length > 0;
+  const lastBackupAt = Number(backupState.lastManualBackupAt || 0);
+  const recentlyBackedUp = lastBackupAt > 0 && Date.now() - lastBackupAt < BACKUP_RECENCY_MS;
+  const dismissedAt = Number(dismissedState[BACKUP_BANNER_DISMISS_KEY] || 0);
+  const dismissedRecently = dismissedAt > 0 && Date.now() - dismissedAt < BACKUP_RECENCY_MS;
+
+  // The review prompt is a once-ever ask; this tip comes back next week. Whenever
+  // both qualify, yield — otherwise this banner, which shows for anyone who has
+  // notes and no recent export, would hide the review prompt permanently.
+  const reviewVisible = elements.reviewBanner && elements.reviewBanner.style.display !== 'none';
+
+  const shouldShow = hasNotes && !recentlyBackedUp && !dismissedRecently && !reviewVisible;
+  elements.backupSafetyBanner.style.display = shouldShow ? 'flex' : 'none';
+}
+
+// ============================================
+// ⭐ REVIEW PROMPT
+// ============================================
+
+/** Stamp first use once, so the prompt can tell how long someone has stayed. */
+async function ensureFirstUseTimestamp() {
+  const stored = await chrome.storage.local.get([FIRST_USE_KEY]);
+  const existing = Number(stored[FIRST_USE_KEY] || 0);
+  if (existing > 0) return existing;
+  const now = Date.now();
+  await chrome.storage.local.set({ [FIRST_USE_KEY]: now });
+  return now;
+}
+
+async function readReviewPromptState() {
+  const stored = await chrome.storage.local.get([REVIEW_PROMPT_STATE_KEY]);
+  return {
+    done: false,
+    shown: false,
+    snoozes: 0,
+    snoozedUntil: 0,
+    ...(stored[REVIEW_PROMPT_STATE_KEY] || {})
+  };
+}
+
+async function writeReviewPromptState(patch) {
+  const next = { ...(await readReviewPromptState()), ...patch };
+  await chrome.storage.local.set({ [REVIEW_PROMPT_STATE_KEY]: next });
+  return next;
+}
+
+async function updateReviewBanner() {
+  if (!elements.reviewBanner) return;
+
+  const hide = () => {
+    elements.reviewBanner.style.display = 'none';
+  };
+
+  const state = await readReviewPromptState();
+  if (state.done || state.snoozes >= REVIEW_MAX_SNOOZES) return hide();
+
+  // Say nothing rather than send someone to the wrong store: unpacked builds and
+  // unrecognised browsers have no listing to point at.
+  if (!getStoreReviewUrl(chrome.runtime?.id, navigator.userAgent)) return hide();
+
+  const firstUseAt = await ensureFirstUseTimestamp();
+  const usedLongEnough = Date.now() - firstUseAt >= REVIEW_MIN_AGE_MS;
+  const noteCount = allNotesCache.filter(isBrowsableNote).length;
+  const stillSnoozed = Number(state.snoozedUntil || 0) > Date.now();
+
+  if (!usedLongEnough || noteCount < REVIEW_MIN_NOTES || stillSnoozed) return hide();
+
+  elements.reviewBanner.style.display = 'flex';
+  // Only one nudge on screen: this one wins while it is eligible.
+  if (elements.backupSafetyBanner) elements.backupSafetyBanner.style.display = 'none';
+
+  if (!state.shown) {
+    await writeReviewPromptState({ shown: true });
+    await trackFunnelEvent('review_prompt_shown', { notes: noteCount });
+  }
 }
 
 // ============================================
@@ -1308,10 +2066,12 @@ async function handleRestoreLocalBackup() {
 
   const result = await backup.restoreFromLocalBackup();
   if (result.success) {
+    await trackFunnelEvent('backup_restored_local', { source: 'auto_backup' });
     showToast(`Restored ${result.count} notes from auto-backup`);
     await loadNotes();
     await loadFolders();
-    updateBackupUI();
+    await updateBackupUI();
+    await updateBackupSafetyBanner();
   } else {
     showToast(result.error || 'Restore failed');
   }
@@ -1335,7 +2095,8 @@ async function onProUnlocked(message) {
   updateFolderAccessUI();
   updateTrashInfoLabel();
   backup.scheduleAutoBackup(true);
-  updateBackupUI();
+  await updateBackupUI();
+  await updateBackupSafetyBanner();
   showToast(message);
   showToast('Tip: export a JSON backup before uninstalling — notes are not stored in the cloud');
 }
@@ -1357,7 +2118,12 @@ async function exportNotes(format) {
 
   URL.revokeObjectURL(url);
   showToast('📥 Exported!');
+  await trackFunnelEvent('notes_exported', { format });
+  if (format === 'json') {
+    await markManualBackupCreated('export_json');
+  }
   if (isPro) backup.scheduleAutoBackup(true);
+  await updateBackupSafetyBanner();
 }
 
 async function downloadFullBackup() {
@@ -1378,7 +2144,9 @@ async function downloadFullBackup() {
   a.click();
   URL.revokeObjectURL(url);
   showToast('📥 Backup downloaded — keep this file safe!');
+  await markManualBackupCreated('full_backup');
   if (isPro) backup.scheduleAutoBackup(true);
+  await updateBackupSafetyBanner();
 }
 
 async function importNotes(file) {
@@ -1411,9 +2179,11 @@ async function importNotes(file) {
       }
       count = await db.importNotes(JSON.stringify(sanitized));
       showToast(`Imported ${count} notes!`);
-      loadNotes();
+      await trackFunnelEvent('backup_restored_import', { source: 'json_import', count });
+      await loadNotes();
       backup.scheduleAutoBackup(isPro);
-      updateBackupUI();
+      await updateBackupUI();
+      await updateBackupSafetyBanner();
     } catch (err) {
       showToast('Import failed: invalid JSON file');
     }
@@ -1484,6 +2254,21 @@ function htmlToPlainTextLines(html) {
   for (const child of wrap.childNodes) walk(child);
   flushLine();
   return lines;
+}
+
+/** Display title for list cards — does not change stored note data. */
+function getNoteCardTitle(note) {
+  const raw = (note?.title || '').trim();
+  const isPlaceholder = !raw || raw.toLowerCase() === 'untitled';
+  if (!isPlaceholder) return raw;
+
+  const lines = htmlToPlainTextLines(note?.content || '');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
+  }
+  return 'Untitled';
 }
 
 function getPreview(html) {
@@ -1701,7 +2486,7 @@ function getDomain(url) {
 }
 
 // ============================================
-// ✨ PRO / PAYMENT INTEGRATION (Card + Crypto)
+// ✨ PRO / PAYMENT INTEGRATION (Stripe/ExtensionPay)
 // ============================================
 
 const PRO_API = 'https://quick-notes-pro.apiworkersdev.workers.dev';
@@ -1777,7 +2562,7 @@ function setupProModalHandlers() {
   const upgradeBtn = document.getElementById('upgradeBtn');
   const proModal = document.getElementById('proModal');
   
-  if (proHeaderBtn) proHeaderBtn.addEventListener('click', openProModal);
+  if (proHeaderBtn) proHeaderBtn.addEventListener('click', () => openProModal('header'));
   if (closeProBtn) closeProBtn.addEventListener('click', closeProModal);
   if (upgradeBtn) upgradeBtn.addEventListener('click', handleCardPayment);
   
@@ -1787,116 +2572,7 @@ function setupProModalHandlers() {
     });
   }
   
-  // Payment method toggle
-  document.querySelectorAll('.payment-method').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const method = btn.dataset.method;
-      document.querySelectorAll('.payment-method').forEach(m => m.classList.remove('active'));
-      btn.classList.add('active');
-      
-      const cardSection = document.getElementById('cardSection');
-      const cryptoSection = document.getElementById('cryptoSection');
-      if (cardSection) cardSection.style.display = method === 'card' ? 'block' : 'none';
-      if (cryptoSection) {
-        cryptoSection.style.display = method === 'crypto' ? 'block' : 'none';
-        // Generate QR code when crypto section is shown
-        if (method === 'crypto') generateCryptoQR();
-      }
-      updateRestoreUiForPaymentMethod();
-    });
-  });
   updateRestoreUiForPaymentMethod();
-  
-  // Copy crypto address
-  const copyBtn = document.getElementById('copyAddressBtn');
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      const address = window.QuickNotesPro?.CRYPTO_CONFIG?.receiverAddress || '0x607Fc9D41858Aa23065275043698a9262F8f9bf9';
-      try {
-        await navigator.clipboard.writeText(address);
-        copyBtn.textContent = '✅ Copied!';
-        copyBtn.classList.add('copied');
-        setTimeout(() => {
-          copyBtn.textContent = '📋 Copy Address';
-          copyBtn.classList.remove('copied');
-        }, 2000);
-      } catch (e) {
-        console.error('Copy failed:', e);
-      }
-    });
-  }
-  
-  // Verify crypto transaction via server
-  const verifyBtn = document.getElementById('verifyTxBtn');
-  if (verifyBtn) {
-    verifyBtn.addEventListener('click', async () => {
-      const emailInput = document.getElementById('cryptoEmailInput');
-      const txInput = document.getElementById('txHashInput');
-      const statusEl = document.getElementById('cryptoStatus');
-      const email = emailInput?.value.trim();
-      const txHash = txInput?.value.trim();
-      
-      if (!email) {
-        if (statusEl) {
-          statusEl.textContent = 'Please enter your email';
-          statusEl.className = 'crypto-note error';
-        }
-        return;
-      }
-      
-      if (!txHash) {
-        if (statusEl) {
-          statusEl.textContent = 'Please enter the transaction hash';
-          statusEl.className = 'crypto-note error';
-        }
-        return;
-      }
-      
-      verifyBtn.disabled = true;
-      verifyBtn.textContent = 'Verifying...';
-      if (statusEl) {
-        statusEl.textContent = 'Checking transaction on Base...';
-        statusEl.className = 'crypto-note';
-      }
-      
-      try {
-        const extensionId = await getExtensionId();
-        const response = await fetch(`${PRO_API}/verify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ txHash, extensionId, email })
-        });
-        const result = await response.json();
-        
-        if (result.success) {
-          verifyBtn.textContent = '✓ Verified!';
-          verifyBtn.classList.add('success');
-          if (statusEl) {
-            const deviceInfo = result.devicesUsed ? ` (${result.devicesUsed}/${result.maxDevices} devices)` : '';
-            statusEl.textContent = `✨ Pro unlocked!${deviceInfo}`;
-            statusEl.className = 'crypto-note success';
-          }
-          await onProUnlocked('✨ Pro unlocked!');
-          await chrome.storage.local.set({ proEmail: email });
-          setTimeout(closeProModal, 2000);
-        } else {
-          verifyBtn.textContent = 'Verify & Activate';
-          verifyBtn.disabled = false;
-          if (statusEl) {
-            statusEl.textContent = result.error || 'Verification failed';
-            statusEl.className = 'crypto-note error';
-          }
-        }
-      } catch (e) {
-        verifyBtn.textContent = 'Verify & Activate';
-        verifyBtn.disabled = false;
-        if (statusEl) {
-          statusEl.textContent = 'Error verifying transaction';
-          statusEl.className = 'crypto-note error';
-        }
-      }
-    });
-  }
   
   const restoreBtn = document.getElementById('restoreLicenseBtn');
   if (restoreBtn) {
@@ -1909,30 +2585,15 @@ function setupProModalHandlers() {
   }
 }
 
-function getActivePaymentMethod() {
-  const active = document.querySelector('.payment-method.active');
-  return active?.dataset.method || 'card';
-}
-
 function updateRestoreUiForPaymentMethod() {
-  const method = getActivePaymentMethod();
   const emailInput = document.getElementById('restoreEmailInput');
   const restoreBtn = document.getElementById('restoreLicenseBtn');
   const hint = document.getElementById('restoreHint');
-  if (method === 'crypto') {
-    if (emailInput) emailInput.placeholder = 'Email used for crypto purchase';
-    if (restoreBtn) restoreBtn.textContent = 'Restore crypto license';
-    if (hint) {
-      hint.innerHTML =
-        'Crypto: enter the <strong>email</strong> you used when verifying your transaction.';
-    }
-  } else {
-    if (emailInput) emailInput.placeholder = 'Email from Stripe receipt (optional if saved)';
-    if (restoreBtn) restoreBtn.textContent = 'Restore purchase';
-    if (hint) {
-      hint.innerHTML =
-        'We try ExtensionPay, then your <strong>Stripe receipt email</strong>. Same email as your card payment.';
-    }
+  if (emailInput) emailInput.placeholder = 'Email from Stripe receipt (optional if saved)';
+  if (restoreBtn) restoreBtn.textContent = 'Restore purchase';
+  if (hint) {
+    hint.innerHTML =
+      'We try ExtensionPay, then your <strong>Stripe receipt email</strong>. Same email as your card payment.';
   }
 }
 
@@ -1940,6 +2601,12 @@ const RESTORE_SUPPORT_EMAIL = 'quicknotes.extension@gmail.com';
 
 function formatRestoreError(message) {
   if (!message) return message;
+  if (/device limit reached|already active on 3 devices/i.test(message)) {
+    return (
+      'This purchase is already active on 3 devices. Contact support to reset your activations. ' +
+      `(${RESTORE_SUPPORT_EMAIL})`
+    );
+  }
   if (/too many restore attempts/i.test(message)) {
     return (
       'Prea multe încercări de restaurare pentru acest email. Încearcă din nou peste aproximativ o oră. ' +
@@ -1966,6 +2633,7 @@ async function finishProRestore({ message, email }) {
     await window.QuickNotesPro?.savePayerEmail?.(email);
     await chrome.storage.local.set({ proEmail: email });
   }
+  await trackFunnelEvent('purchase_restored', { source: 'manual_restore' });
   await onProUnlocked(message);
   setTimeout(closeProModal, 2000);
 }
@@ -1981,7 +2649,7 @@ async function handleRestoreExtensionPay(btn) {
   if (statusEl) {
     statusEl.textContent =
       'Sign in with the email from your Stripe receipt. Or use "Restore with Stripe email" below. / Sau restaurează cu emailul Stripe mai jos.';
-    statusEl.className = 'crypto-note';
+    statusEl.className = 'restore-note';
   }
 
   try {
@@ -1990,12 +2658,12 @@ async function handleRestoreExtensionPay(btn) {
 
     if (!result) throw new Error('Restore unavailable');
 
-    if (result.success) {
+    if (result?.success) {
       btn.textContent = '✓ Restored!';
       btn.classList.add('success');
       if (statusEl) {
         statusEl.textContent = '✨ Pro restored via ExtensionPay!';
-        statusEl.className = 'crypto-note success';
+        statusEl.className = 'restore-note success';
       }
       await finishProRestore({
         message: '✨ Pro restored via ExtensionPay!',
@@ -2008,14 +2676,14 @@ async function handleRestoreExtensionPay(btn) {
     btn.disabled = false;
     if (statusEl) {
       statusEl.textContent = (result.error || 'Could not restore card purchase') + cardRestoreHelpSuffix();
-      statusEl.className = 'crypto-note error';
+      statusEl.className = 'restore-note error';
     }
   } catch (e) {
     btn.textContent = 'Restore with ExtensionPay';
     btn.disabled = false;
     if (statusEl) {
       statusEl.textContent = 'Error connecting to ExtensionPay.' + cardRestoreHelpSuffix();
-      statusEl.className = 'crypto-note error';
+      statusEl.className = 'restore-note error';
     }
   }
 }
@@ -2024,134 +2692,89 @@ async function handleRestoreLicense(restoreBtn) {
   const emailInput = document.getElementById('restoreEmailInput');
   const statusEl = document.getElementById('restoreStatus');
   const email = emailInput?.value.trim();
-  const method = getActivePaymentMethod();
-  const isCard = method !== 'crypto';
-
-  if (!isCard && !email) {
-    if (statusEl) {
-      statusEl.textContent = 'Please enter your email (crypto purchases only)';
-      statusEl.className = 'crypto-note error';
-    }
-    return;
-  }
-
-  const defaultBtnLabel = isCard ? 'Restore purchase' : 'Restore crypto license';
+  const defaultBtnLabel = 'Restore purchase';
   restoreBtn.disabled = true;
   restoreBtn.textContent = 'Checking...';
 
   if (statusEl) {
-    statusEl.textContent = isCard
-      ? 'Verificăm licența pe emailul Stripe… / Checking Stripe email restore…'
-      : 'Checking crypto license…';
-    statusEl.className = 'crypto-note';
+    statusEl.textContent = 'Verificăm licența pe emailul Stripe… / Checking Stripe email restore…';
+    statusEl.className = 'restore-note';
   }
 
   try {
-    if (isCard) {
-      const restore = window.QuickNotesPro?.restorePurchase;
-      const result = restore
-        ? await restore({ email, openLogin: false })
-        : null;
-
-      if (result?.success) {
-        restoreBtn.textContent = '✓ Restored!';
-        restoreBtn.classList.add('success');
-        const via =
-          result.method === 'extpay'
-            ? 'ExtensionPay'
-            : result.method === 'server'
-              ? 'license server'
-              : result.method === 'stripe'
-                ? 'Stripe email'
-                : 'purchase';
-        if (statusEl) {
-          const deviceInfo =
-            result.devicesUsed != null
-              ? ` (${result.devicesUsed}/${result.maxDevices} devices)`
-              : '';
-          statusEl.textContent = `✨ Pro restored via ${via}!${deviceInfo}`;
-          statusEl.className = 'crypto-note success';
-        }
-        await finishProRestore({
-          message: `✨ Pro restored via ${via}!`,
-          email: result.email || email,
-        });
-        return;
-      }
-
-      restoreBtn.textContent = defaultBtnLabel;
-      restoreBtn.disabled = false;
-      if (statusEl) {
-        const err = formatRestoreError(
-          result?.error ||
-            'Could not restore yet. Enter your Stripe receipt email or use ExtensionPay above.'
-        );
-        const rateLimited =
-          result?.rateLimited || /too many restore attempts/i.test(result?.error || '');
-        const extHint =
-          !rateLimited && result?.needsLogin
-            ? ' Try "Restore with ExtensionPay" on this Chrome profile.'
-            : '';
-        statusEl.textContent =
-          err + extHint + (rateLimited ? '' : cardRestoreHelpSuffix());
-        statusEl.className = 'crypto-note error';
-      }
-      return;
-    }
-
-    const restore = window.QuickNotesPro?.restoreLicenseByEmail;
-    const result = restore ? await restore(email) : null;
-
-    if (!result) {
-      throw new Error('Restore unavailable');
-    }
-
+    const restore = window.QuickNotesPro?.restorePurchase;
+    const result = restore
+      ? await restore({ email, openLogin: false })
+      : null;
     if (result.success) {
       restoreBtn.textContent = '✓ Restored!';
       restoreBtn.classList.add('success');
+      const via =
+        result.method === 'extpay'
+          ? 'ExtensionPay'
+          : result.method === 'server'
+            ? 'license server'
+            : result.method === 'stripe'
+              ? 'Stripe email'
+              : 'purchase';
       if (statusEl) {
-        const deviceInfo = result.devicesUsed ? ` (${result.devicesUsed}/${result.maxDevices} devices)` : '';
-        statusEl.textContent = `✨ Crypto license restored!${deviceInfo}`;
-        statusEl.className = 'crypto-note success';
+        const deviceInfo =
+          result.devicesUsed != null
+            ? ` (${result.devicesUsed}/${result.maxDevices} devices)`
+            : '';
+        statusEl.textContent = `✨ Pro restored via ${via}!${deviceInfo}`;
+        statusEl.className = 'restore-note success';
       }
-      await finishProRestore({ message: '✨ Pro restored!', email });
+      await finishProRestore({
+        message: `✨ Pro restored via ${via}!`,
+        email: result.email || email,
+      });
       return;
     }
 
     restoreBtn.textContent = defaultBtnLabel;
     restoreBtn.disabled = false;
     if (statusEl) {
-      statusEl.textContent = (result.error || 'No crypto license found for this email.') + cardRestoreHelpSuffix();
-      statusEl.className = 'crypto-note error';
+      const err = formatRestoreError(
+        result?.error ||
+          'Could not restore yet. Enter your Stripe receipt email or use ExtensionPay above.'
+      );
+      const rateLimited =
+        result?.rateLimited || /too many restore attempts/i.test(result?.error || '');
+      const extHint =
+        !rateLimited && result?.needsLogin
+          ? ' Try "Restore with ExtensionPay" on this Chrome profile.'
+          : '';
+      statusEl.textContent =
+        err + extHint + (rateLimited ? '' : cardRestoreHelpSuffix());
+      statusEl.className = 'restore-note error';
     }
   } catch (e) {
     restoreBtn.textContent = defaultBtnLabel;
     restoreBtn.disabled = false;
     if (statusEl) {
       statusEl.textContent = 'Error checking license.' + cardRestoreHelpSuffix();
-      statusEl.className = 'crypto-note error';
+      statusEl.className = 'restore-note error';
     }
   }
 }
 
-function openProModal() {
+function openProModal(source = 'unknown') {
   const proModal = document.getElementById('proModal');
   if (proModal) {
     proModal.style.display = 'flex';
+    if (!isPro) {
+      trackFunnelEvent('paywall_viewed', { source });
+    }
     
     // If already Pro, hide payment options and show status
     if (isPro) {
-      const paymentMethods = proModal.querySelector('.payment-methods');
       const cardSection = document.getElementById('cardSection');
-      const cryptoSection = document.getElementById('cryptoSection');
       const proStatus = document.getElementById('proStatus');
-      const proFeatures = proModal.querySelector('.pro-features');
       const proPrice = proModal.querySelector('.pro-price');
       const proGuarantee = proModal.querySelector('.pro-guarantee');
       
-      if (paymentMethods) paymentMethods.style.display = 'none';
       if (cardSection) cardSection.style.display = 'none';
-      if (cryptoSection) cryptoSection.style.display = 'none';
       if (proPrice) proPrice.style.display = 'none';
       if (proGuarantee) proGuarantee.style.display = 'none';
       if (proStatus) proStatus.style.display = 'block';
@@ -2164,12 +2787,14 @@ function openProModal() {
     
     // Extend popup height for modal
     document.body.style.minHeight = '520px';
+    modalA11y.open(proModal);
   }
 }
 
 function closeProModal() {
   const proModal = document.getElementById('proModal');
   if (proModal) {
+    modalA11y.close(proModal);
     proModal.style.display = 'none';
     // Reset popup height
     document.body.style.minHeight = '';
@@ -2177,16 +2802,12 @@ function closeProModal() {
 }
 
 function handleCardPayment() {
+  trackFunnelEvent('upgrade_clicked', { method: 'card' });
   if (window.QuickNotesPro) {
     window.QuickNotesPro.openPaymentPage();
   } else {
     window.open('https://extensionpay.com', '_blank');
   }
-}
-
-// Start crypto payment verification
-function generateCryptoQR() {
-  // No auto-verification - manual email process
 }
 
 // ============================================
@@ -2198,25 +2819,144 @@ async function loadFolders() {
   updateFolderUI();
 }
 
-function updateFolderUI() {
-  const visibleFolders = canUseFolders() ? folders : folders.filter((f) => f.id === 'all');
+const LIST_FILTER_LABELS = {
+  all: 'All',
+  personal: 'Personal',
+  work: 'Work'
+};
 
-  if (elements.folderPills) {
-    elements.folderPills.innerHTML = visibleFolders.map(f => {
-      const count = f.id === 'all'
-        ? notes.length
-        : notes.filter(n => n.folderId === f.id).length;
-      const badge = count > 0 ? `<span class="pill-count">${count}</span>` : '';
-      return `<button class="folder-pill${f.id === currentFolderId ? ' active' : ''}" data-folder-id="${f.id}">${escapeHtml(f.name)}${badge}</button>`;
-    }).join('');
+function updateFolderUI() {
+  if (!elements.folderPills) return;
+
+  const browsable = allNotesCache.filter(isBrowsableNote);
+  const needsCount = countNeedsReview(allNotesCache);
+  const archivedTotal = allNotesCache.filter(isArchivedNote).length;
+  const pills = [];
+
+  const allCount = browsable.length;
+  const allActive =
+    currentFolderId === 'all' &&
+    (listViewFilter === 'default' || listViewFilter === 'page' || listViewFilter === 'site');
+  pills.push({
+    kind: 'folder',
+    folderId: 'all',
+    label: LIST_FILTER_LABELS.all,
+    count: allCount,
+    active: allActive
+  });
+
+  if (needsCount > 0) {
+    pills.push({
+      kind: 'list',
+      listFilter: 'needs-review',
+      label: 'Inbox',
+      count: needsCount,
+      active: listViewFilter === 'needs-review'
+    });
   }
 
-  // Update editor folder dropdown
+  if (canUseFolders()) {
+    for (const id of ['personal', 'work']) {
+      const folder = folders.find((f) => f.id === id);
+      if (!folder) continue;
+      const count = browsable.filter((n) => n.folderId === id).length;
+      pills.push({
+        kind: 'folder',
+        folderId: id,
+        label: LIST_FILTER_LABELS[id] || folder.name,
+        count,
+        active: currentFolderId === id && listViewFilter !== 'needs-review' && listViewFilter !== 'archived'
+      });
+    }
+  }
+
+  elements.folderPills.innerHTML = pills
+    .map((p) => {
+      const badge = p.count > 0 ? `<span class="pill-count">${p.count}</span>` : '';
+      const activeClass = p.active ? ' active' : '';
+      if (p.kind === 'list') {
+        return `<button type="button" class="folder-pill list-filter-pill${activeClass}" data-list-filter="${p.listFilter}">${escapeHtml(p.label)}${badge}</button>`;
+      }
+      return `<button type="button" class="folder-pill list-filter-pill${activeClass}" data-folder-id="${p.folderId}">${escapeHtml(p.label)}${badge}</button>`;
+    })
+    .join('');
+
+  updateListFilterOverflowMenu();
+
   if (elements.noteFolderSelect) {
-    const userFolders = folders.filter(f => f.id !== 'all');
+    const userFolders = folders.filter((f) => f.id !== 'all');
     elements.noteFolderSelect.innerHTML =
       `<option value="">No folder</option>` +
-      userFolders.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+      userFolders.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+  }
+}
+
+function updateListFilterOverflowMenu() {
+  const menu = elements.listFilterMenu;
+  if (!menu) return;
+
+  const archivedTotal = allNotesCache.filter(isArchivedNote).length;
+  const items = [
+    {
+      action: 'trash',
+      label: trashCountCache > 0 ? `Trash ${trashCountCache}` : 'Trash'
+    }
+  ];
+
+  if (archivedTotal > 0) {
+    items.push({
+      action: 'archived',
+      label: `Archived ${archivedTotal}`,
+      active: listViewFilter === 'archived'
+    });
+  }
+
+  items.push({ action: 'manage-folders', label: 'Manage folders' });
+
+  menu.innerHTML = items
+    .map(
+      (item) =>
+        `<button type="button" class="list-filter-menu-item${item.active ? ' active' : ''}" role="menuitem" data-overflow-action="${item.action}">${escapeHtml(item.label)}</button>`
+    )
+    .join('');
+}
+
+function closeListFilterMenu() {
+  if (elements.listFilterMenu) elements.listFilterMenu.hidden = true;
+  if (elements.manageFoldersBtn) {
+    elements.manageFoldersBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function toggleListFilterMenu() {
+  const menu = elements.listFilterMenu;
+  if (!menu) return;
+
+  if (!menu.hidden) {
+    closeListFilterMenu();
+    return;
+  }
+
+  updateListFilterOverflowMenu();
+  menu.hidden = false;
+  if (elements.manageFoldersBtn) {
+    elements.manageFoldersBtn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function handleListFilterOverflowAction(action) {
+  closeListFilterMenu();
+
+  if (action === 'trash') {
+    openTrash();
+    return;
+  }
+  if (action === 'archived') {
+    applyPrimaryListFilter(listViewFilter === 'archived' ? 'all' : 'archived');
+    return;
+  }
+  if (action === 'manage-folders') {
+    openFoldersModal();
   }
 }
 
@@ -2225,14 +2965,12 @@ async function filterByFolder(folderId) {
     showLimitWarning('Folders require Pro');
     return;
   }
-  currentFolderId = folderId;
-  notes = await db.getNotesByFolder(folderId);
-  renderNotesList(notes);
-  // Sync active pill
-  if (elements.folderPills) {
-    elements.folderPills.querySelectorAll('.folder-pill').forEach(p => {
-      p.classList.toggle('active', p.dataset.folderId === folderId);
-    });
+  if (folderId === 'personal') {
+    applyPrimaryListFilter('personal');
+  } else if (folderId === 'work') {
+    applyPrimaryListFilter('work');
+  } else {
+    applyPrimaryListFilter('all');
   }
 }
 
@@ -2244,11 +2982,13 @@ function openFoldersModal() {
   if (elements.foldersModal) {
     elements.foldersModal.style.display = 'flex';
     renderFoldersList();
+    modalA11y.open(elements.foldersModal);
   }
 }
 
 function closeFoldersModal() {
   if (elements.foldersModal) {
+    modalA11y.close(elements.foldersModal);
     elements.foldersModal.style.display = 'none';
   }
 }
@@ -2459,6 +3199,7 @@ async function updatePinToggleState() {
 function openResetPinModal() {
   if (elements.resetPinModal) {
     elements.resetPinModal.style.display = 'flex';
+    modalA11y.open(elements.resetPinModal);
     if (elements.resetConfirmInput) {
       elements.resetConfirmInput.value = '';
     }
@@ -2470,6 +3211,7 @@ function openResetPinModal() {
 
 function closeResetPinModal() {
   if (elements.resetPinModal) {
+    modalA11y.close(elements.resetPinModal);
     elements.resetPinModal.style.display = 'none';
   }
 }
@@ -2553,15 +3295,47 @@ function setupFoldersAndPinListeners() {
   // Folder pill clicks (event delegation)
   if (elements.folderPills) {
     elements.folderPills.addEventListener('click', (e) => {
-      const pill = e.target.closest('.folder-pill');
-      if (pill) filterByFolder(pill.dataset.folderId);
+      const pill = e.target.closest('.list-filter-pill');
+      if (!pill) return;
+
+      const listFilter = pill.dataset.listFilter;
+      if (listFilter === 'needs-review') {
+        applyPrimaryListFilter(listViewFilter === 'needs-review' ? 'all' : 'needs-review');
+        return;
+      }
+
+      const folderId = pill.dataset.folderId;
+      if (folderId === 'personal') {
+        applyPrimaryListFilter('personal');
+      } else if (folderId === 'work') {
+        applyPrimaryListFilter('work');
+      } else if (folderId === 'all') {
+        applyPrimaryListFilter('all');
+      }
     });
   }
 
-  // Manage folders button
   if (elements.manageFoldersBtn) {
-    elements.manageFoldersBtn.addEventListener('click', openFoldersModal);
+    elements.manageFoldersBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleListFilterMenu();
+    });
   }
+
+  if (elements.listFilterMenu) {
+    elements.listFilterMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-overflow-action]');
+      if (!item) return;
+      e.stopPropagation();
+      handleListFilterOverflowAction(item.dataset.overflowAction);
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#listFilterMoreWrap')) {
+      closeListFilterMenu();
+    }
+  });
   
   // Close folders modal
   if (elements.closeFoldersBtn) {
@@ -2653,11 +3427,13 @@ function openReminderModal() {
   
   if (elements.reminderModal) {
     elements.reminderModal.style.display = 'flex';
+    modalA11y.open(elements.reminderModal);
   }
 }
 
 function closeReminderModal() {
   if (elements.reminderModal) {
+    modalA11y.close(elements.reminderModal);
     elements.reminderModal.style.display = 'none';
   }
 }
@@ -2690,10 +3466,9 @@ async function setReminder() {
     // Update note with reminder info
     await db.updateNote(currentNote.id, { reminder: { time: reminderTime, notified: false } });
     currentNote.reminder = { time: reminderTime, notified: false };
+    await trackFunnelEvent('reminder_created', { source: 'editor' });
     
-    // Refresh notes list to show reminder icon
-    notes = await db.getAllNotes();
-    renderNotesList();
+    await loadNotes();
     
     updateReminderBar();
     closeReminderModal();
@@ -2703,6 +3478,12 @@ async function setReminder() {
     const timeStr = reminderDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const dateStr = reminderDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
     showToast(`⏰ Reminder set for ${dateStr} at ${timeStr}`);
+
+    if (!onboardingState.reminderCreated) {
+      await saveOnboardingState({ reminderCreated: true });
+      showToast('Step 3/3: Open Settings and download a JSON backup before uninstalling.');
+      await trackFunnelEvent('onboarding_backup_nudge_shown', { source: 'reminder' });
+    }
   }
 }
 

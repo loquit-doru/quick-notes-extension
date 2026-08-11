@@ -1,5 +1,5 @@
 // Quick Notes - Service Worker
-// Handles global shortcuts, context capture, and reminders
+// Handles global shortcuts and reminders
 
 importScripts('../shared/extpay-config.js', '../lib/ExtPay.js');
 
@@ -12,6 +12,52 @@ function isExtPayUserPaid(user) {
 }
 
 const PRO_API = 'https://quick-notes-pro.apiworkersdev.workers.dev';
+const ANALYTICS_SETTINGS_KEY = 'analyticsSettings';
+const ANALYTICS_EVENTS_KEY = 'analyticsEvents';
+const ANALYTICS_EVENT_LOG_KEY = 'analyticsEventLog';
+
+function sanitizeAnalyticsProps(props) {
+  const out = {};
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value == null) continue;
+    if (typeof value === 'string') out[key] = value.slice(0, 120);
+    else if (typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+  }
+  return out;
+}
+
+async function trackBackgroundFunnelEvent(name, props = {}) {
+  if (!name) return;
+  const result = await chrome.storage.local.get([
+    ANALYTICS_SETTINGS_KEY,
+    ANALYTICS_EVENTS_KEY,
+    ANALYTICS_EVENT_LOG_KEY,
+  ]);
+
+  const settings = result[ANALYTICS_SETTINGS_KEY] || { enabled: true };
+  if (settings.enabled === false) return;
+
+  const events = result[ANALYTICS_EVENTS_KEY] || {};
+  const log = Array.isArray(result[ANALYTICS_EVENT_LOG_KEY]) ? result[ANALYTICS_EVENT_LOG_KEY] : [];
+  const timestamp = new Date().toISOString();
+  const entry = events[name] || { count: 0, firstAt: timestamp };
+
+  entry.count += 1;
+  entry.lastAt = timestamp;
+  entry.lastProps = sanitizeAnalyticsProps(props);
+  events[name] = entry;
+
+  log.push({ name, at: timestamp, props: sanitizeAnalyticsProps(props) });
+  if (log.length > 200) {
+    log.splice(0, log.length - 200);
+  }
+
+  await chrome.storage.local.set({
+    [ANALYTICS_SETTINGS_KEY]: settings,
+    [ANALYTICS_EVENTS_KEY]: events,
+    [ANALYTICS_EVENT_LOG_KEY]: log,
+  });
+}
 
 async function getBackgroundExtensionId() {
   const { extensionId } = await chrome.storage.local.get(['extensionId']);
@@ -21,16 +67,30 @@ async function getBackgroundExtensionId() {
   return id;
 }
 
+async function getBackgroundDeviceId() {
+  const { deviceId, extensionId } = await chrome.storage.local.get(['deviceId', 'extensionId']);
+  if (deviceId) return deviceId;
+  if (extensionId && String(extensionId).startsWith('qn_')) {
+    await chrome.storage.local.set({ deviceId: extensionId });
+    return extensionId;
+  }
+  const id = 'qnd_' + crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId: id });
+  return id;
+}
+
 function registerStripeLicenseBackground(email) {
   const trimmed = (email || '').trim();
   if (!trimmed) return;
-  getBackgroundExtensionId().then((extensionId) => {
-    fetch(`${PRO_API}/register-stripe-license`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extensionId, email: trimmed }),
-    }).catch(() => {});
-  });
+  Promise.all([getBackgroundExtensionId(), getBackgroundDeviceId()]).then(
+    ([extensionId, deviceId]) => {
+      fetch(`${PRO_API}/register-stripe-license`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extensionId, deviceId, email: trimmed }),
+      }).catch(() => {});
+    }
+  );
 }
 
 async function persistExtensionPayPro(user) {
@@ -48,6 +108,7 @@ async function persistExtensionPayPro(user) {
     await chrome.storage.sync.set({ proUnlocked: true });
   } catch (_) {}
   if (user?.email) registerStripeLicenseBackground(user.email);
+  await trackBackgroundFunnelEvent('purchase_restored', { source: 'extensionpay_background' });
 }
 
 async function syncExtensionPayProStatus() {
@@ -98,7 +159,7 @@ function requestExtensionUpdateCheck() {
 function notifyUpdateReady(version) {
   chrome.notifications.create(UPDATE_READY_NOTIF_ID, {
     type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    iconUrl: chrome.runtime.getURL('icons/qn-128.png'),
     title: 'Quick Notes update ready',
     message: `Version ${version} is ready. Reload to apply.`,
     buttons: [{ title: 'Reload now' }],
@@ -113,7 +174,7 @@ function notifyUpdateApplied(previousVersion) {
 
   chrome.notifications.create(UPDATE_APPLIED_NOTIF_ID, {
     type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    iconUrl: chrome.runtime.getURL('icons/qn-128.png'),
     title: 'Quick Notes updated',
     message: `You're now on version ${version}${fromText}.`,
     priority: 1
@@ -143,6 +204,7 @@ chrome.runtime.onInstalled.addListener((details) => {
         fastMode: false
       }
     });
+    trackBackgroundFunnelEvent('install', { source: 'runtime_onInstalled' });
   }
 
   if (details.reason === 'update') {
@@ -211,7 +273,7 @@ async function rescheduleAllReminders() {
           try {
             await chrome.notifications.create(`note_${noteId}`, {
               type: 'basic',
-              iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+              iconUrl: chrome.runtime.getURL('icons/qn-128.png'),
               title: 'Missed Reminder!',
               message: reminderData.title || 'You have a note reminder!',
               buttons: [
@@ -270,7 +332,7 @@ async function triggerReminder(noteId, reminderData) {
     const notifId = `note_${noteId}`;
     chrome.notifications.create(notifId, {
       type: 'basic',
-      iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+      iconUrl: chrome.runtime.getURL('icons/qn-128.png'),
       title: 'Quick Notes Reminder',
       message: reminderData.title || 'You have a note reminder!'
     }, (createdId) => {
@@ -342,7 +404,7 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
 
         chrome.notifications.create({
           type: 'basic',
-          iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+          iconUrl: chrome.runtime.getURL('icons/qn-128.png'),
           title: 'Snoozed',
           message: 'Reminder will repeat in 10 minutes',
           priority: 1
@@ -376,21 +438,6 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'getContext') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        sendResponse({
-          url: tabs[0].url,
-          title: tabs[0].title,
-          favIconUrl: tabs[0].favIconUrl
-        });
-      } else {
-        sendResponse(null);
-      }
-    });
-    return true;
-  }
-
   if (request.action === 'setReminder') {
     const { noteId, reminderTime, noteTitle } = request;
     debugLog('setReminder request:', { noteId, reminderTime, noteTitle });

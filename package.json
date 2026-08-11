@@ -1,11 +1,29 @@
 {
   "name": "quick-notes",
-  "version": "1.7.0",
-  "description": "Lightning-fast notes. Unlimited notes, rich text, search - all FREE.",
+  "version": "1.7.2",
+  "description": "Local-first browser notes with a 7-day full trial, free core plan, and optional one-time Pro unlock.",
   "author": "loquit-doru",
   "license": "MIT",
+  "type": "module",
   "scripts": {
-    "gen-icons": "node scripts/gen-icons.mjs"
+    "gen-icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-png-icons.ps1",
+    "gen:screenshots": "node scripts/ensure-playwright-browsers.js && node scripts/gen-screenshots.mjs",
+    "build:zip": "node scripts/build-zip.mjs",
+    "check:js": "node scripts/check-js.js",
+    "check:manifest": "node scripts/validate-extension.js",
+    "check:zip": "node scripts/validate-zip.js",
+    "test:landing:static": "node scripts/test-landing-static.mjs",
+    "setup:playwright": "node scripts/ensure-playwright-browsers.js",
+    "pretest:landing": "node scripts/ensure-playwright-browsers.js && node scripts/ensure-landing-deps.js",
+    "pretest:extension": "node scripts/ensure-playwright-browsers.js",
+    "pretest:extension:e2e": "node scripts/ensure-playwright-browsers.js",
+    "test:landing": "node scripts/run-playwright.js playwright.config.ts",
+    "test:extension": "node scripts/run-playwright.js playwright.extension.config.ts",
+    "test:extension:e2e": "node scripts/run-playwright.js playwright.extension-e2e.config.ts",
+    "test:logic": "node scripts/run-logic-tests.js",
+    "qa": "node scripts/qa.js"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
 }

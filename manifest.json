@@ -1,21 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "Quick Notes",
-  "version": "1.7.0",
-  "description": "The fastest notes extension on Chrome. Folders, PIN lock, reminders, instant capture. Zero friction. Your notes are always safe.",
+  "name": "Quick Notes: Offline Notepad & Note Taking, No Account",
+  "short_name": "Quick Notes",
+  "version": "1.7.2",
+  "description": "Fast notepad for any tab. No account, no cloud, no tracking. Free core plan plus an optional one-time Pro unlock.",
   "author": "Quick Notes Team",
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "icons/qn-16.png",
+    "32": "icons/qn-32.png",
+    "48": "icons/qn-48.png",
+    "128": "icons/qn-128.png"
   },
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png"
+      "16": "icons/qn-16.png",
+      "32": "icons/qn-32.png",
+      "48": "icons/qn-48.png"
     },
     "default_title": "Quick Notes (Ctrl+Shift+Q)"
   },
@@ -25,7 +26,6 @@
   "permissions": [
     "storage",
     "activeTab",
-    "tabs",
     "alarms",
     "notifications"
   ],

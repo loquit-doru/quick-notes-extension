@@ -1,18 +1,5 @@
-// Quick Notes Pro - Payment System with ExtensionPay + Crypto (Base)
-// Card via ExtensionPay, Crypto via Base Network
-
-// Crypto payment config
-const CRYPTO_CONFIG = {
-  network: 'base',
-  chainId: 8453,
-  receiverAddress: '0x607Fc9D41858Aa23065275043698a9262F8f9bf9',
-  priceETH: 0.001, // ~$2.99
-  priceUSDC: 3,
-  usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
-  baseRPC: 'https://mainnet.base.org',
-};
-
-// License API (crypto + email restore)
+// Quick Notes Pro - Stripe/ExtensionPay license flow
+// License API (server check + Stripe restore)
 const PRO_API = 'https://quick-notes-pro.apiworkersdev.workers.dev';
 
 // Slug from shared/extpay-config.js (loaded before this script in popup + service worker).
@@ -34,6 +21,27 @@ async function getExtensionId() {
     await chrome.storage.local.set({ extensionId });
   }
   return extensionId;
+}
+
+/** Stable per browser profile — used for device limit slots (not regenerated on restore). */
+async function getDeviceId() {
+  const stored = await chrome.storage.local.get(['deviceId', 'extensionId']);
+  if (stored.deviceId) return stored.deviceId;
+
+  let deviceId = stored.extensionId;
+  if (deviceId && typeof deviceId === 'string' && deviceId.startsWith('qn_')) {
+    await chrome.storage.local.set({ deviceId });
+    return deviceId;
+  }
+
+  deviceId = 'qnd_' + crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId });
+  return deviceId;
+}
+
+async function getLicenseClientIds() {
+  const [extensionId, deviceId] = await Promise.all([getExtensionId(), getDeviceId()]);
+  return { extensionId, deviceId };
 }
 
 async function readProUnlocked() {
@@ -182,12 +190,12 @@ async function restoreStripeByEmail(email) {
     return { success: false, method: 'stripe', error: 'Please enter your email' };
   }
 
-  const extensionId = await getExtensionId();
+  const { extensionId, deviceId } = await getLicenseClientIds();
   try {
     const response = await fetch(`${PRO_API}/activate-stripe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extensionId, email: trimmed }),
+      body: JSON.stringify({ extensionId, deviceId, email: trimmed }),
     });
     const result = await response.json();
 
@@ -226,32 +234,6 @@ async function restoreStripeByEmail(email) {
   }
 }
 
-/** Crypto license restore via workers API (/activate). */
-async function restoreLicenseByEmail(email) {
-  const trimmed = (email || '').trim();
-  if (!trimmed) {
-    return { success: false, error: 'Please enter your email' };
-  }
-
-  const extensionId = await getExtensionId();
-  const response = await fetch(`${PRO_API}/activate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ extensionId, email: trimmed })
-  });
-  const result = await response.json();
-
-  if (result.success) {
-    await setProUnlocked({ proEmail: trimmed, paymentMethod: 'crypto-restore' });
-    return { success: true, method: 'crypto', ...result };
-  }
-  return {
-    success: false,
-    method: 'crypto',
-    error: result.error || 'No crypto license found for this email',
-  };
-}
-
 /** Await on every popup open before paywall / trial limits. */
 async function checkExtensionPayPro() {
   if (await readProUnlocked()) {
@@ -275,7 +257,7 @@ async function checkExtensionPayPro() {
   return { unlocked: false, source: 'extpay' };
 }
 
-/** Server license for this extensionId (crypto or stripe-bound). */
+/** Server license for this extensionId. */
 async function checkServerProStatus() {
   const extensionId = await getExtensionId();
   try {
@@ -297,12 +279,13 @@ async function checkServerProStatus() {
 async function registerStripeLicense(email) {
   const trimmed = (email || '').trim();
   if (!trimmed) return;
-  const extensionId = await getExtensionId();
-  fetch(`${PRO_API}/register-stripe-license`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ extensionId, email: trimmed }),
-  }).catch((err) => console.warn('register-stripe-license failed:', err));
+  getLicenseClientIds().then(({ extensionId, deviceId }) => {
+    fetch(`${PRO_API}/register-stripe-license`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extensionId, deviceId, email: trimmed }),
+    }).catch((err) => console.warn('register-stripe-license failed:', err));
+  });
 }
 
 /** Silent restore using stored payer email (no UI). */
@@ -393,106 +376,6 @@ function openPaymentPage() {
   }
 }
 
-// Verify crypto transaction on Base via RPC
-async function verifyCryptoPayment(txHash) {
-  try {
-    // Clean the hash
-    txHash = txHash.trim();
-    if (!txHash.startsWith('0x')) txHash = '0x' + txHash;
-
-    // Verify format
-    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-      return { success: false, error: 'Invalid transaction hash format' };
-    }
-
-    // Get transaction via Base RPC
-    const txResponse = await fetch(CRYPTO_CONFIG.baseRPC, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'eth_getTransactionByHash',
-        params: [txHash],
-        id: 1
-      })
-    });
-    const txData = await txResponse.json();
-    const tx = txData.result;
-
-    if (!tx) {
-      return { success: false, error: 'Transaction not found' };
-    }
-
-    // Get receipt to verify success
-    const receiptResponse = await fetch(CRYPTO_CONFIG.baseRPC, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'eth_getTransactionReceipt',
-        params: [txHash],
-        id: 2
-      })
-    });
-    const receiptData = await receiptResponse.json();
-    const receipt = receiptData.result;
-
-    if (!receipt || receipt.status !== '0x1') {
-      return { success: false, error: 'Transaction failed or pending' };
-    }
-
-    // Verify recipient
-    const toAddress = tx.to?.toLowerCase();
-    const receiverLower = CRYPTO_CONFIG.receiverAddress.toLowerCase();
-    const usdcLower = CRYPTO_CONFIG.usdcContract.toLowerCase();
-
-    const isETHTransfer = toAddress === receiverLower;
-    const isUSDCTransfer = toAddress === usdcLower;
-
-    if (!isETHTransfer && !isUSDCTransfer) {
-      return { success: false, error: 'Transaction not sent to correct address' };
-    }
-
-    // For USDC transfer, verify the input data contains our address
-    if (isUSDCTransfer) {
-      const inputData = tx.input?.toLowerCase() || '';
-      const receiverInInput = inputData.includes(receiverLower.slice(2));
-      if (!receiverInInput) {
-        return { success: false, error: 'USDC not sent to correct address' };
-      }
-
-      if (inputData.length >= 138) {
-        const amountHex = '0x' + inputData.slice(-64);
-        const amountUSDC = parseInt(amountHex, 16) / 1e6;
-        if (amountUSDC < CRYPTO_CONFIG.priceUSDC * 0.95) {
-          return { success: false, error: `Insufficient USDC amount` };
-        }
-      }
-    }
-
-    // Verify amount for ETH
-    if (isETHTransfer) {
-      const valueWei = BigInt(tx.value);
-      const minWei = BigInt(Math.floor(CRYPTO_CONFIG.priceETH * 0.95 * 1e18));
-      if (valueWei < minWei) {
-        return { success: false, error: 'Insufficient ETH amount sent' };
-      }
-    }
-
-    // Payment verified! Store it
-    await setProUnlocked({
-      cryptoTxHash: txHash,
-      cryptoPaidAt: new Date().toISOString(),
-      paymentMethod: 'crypto-base',
-    });
-
-    return { success: true, txHash };
-  } catch (err) {
-    console.error('Crypto verification error:', err);
-    return { success: false, error: 'Verification failed. Please try again.' };
-  }
-}
-
 // Copy to clipboard helper
 async function copyToClipboard(text) {
   try {
@@ -537,19 +420,18 @@ window.QuickNotesPro = {
   checkExtensionPayPro,
   checkServerProStatus,
   openPaymentPage,
-  verifyCryptoPayment,
   restoreExtensionPay,
   restoreStripeByEmail,
-  restoreLicenseByEmail,
   restorePurchase,
   trySilentStripeRestore,
   registerStripeLicense,
   savePayerEmail,
   grantProLocally,
   getExtensionId,
+  getDeviceId,
+  getLicenseClientIds,
   setProUnlocked,
   copyToClipboard,
-  CRYPTO_CONFIG,
   extpay,
   EXTPAY_EXTENSION_ID,
   PRO_API,
@@ -559,6 +441,7 @@ window.QuickNotesPro = {
 async function resetProStatus() {
   const keys = [
     'proUnlocked',
+    // Legacy keys from deprecated crypto flow.
     'cryptoTxHash',
     'cryptoPaidAt',
     'proPaidAt',

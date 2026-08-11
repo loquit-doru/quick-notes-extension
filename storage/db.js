@@ -1,6 +1,8 @@
 // Quick Notes - IndexedDB Storage
 // Direct IndexedDB for maximum speed
 
+import { REVIEW_STATUS } from '../shared/config.js';
+
 const DB_NAME = 'QuickNotesDB';
 const DB_VERSION = 4;  // Bumped for folders support
 const STORE_NAME = 'notes';
@@ -96,7 +98,9 @@ export async function createNote(content = '', title = 'Untitled', folderId = nu
     contextTitle: null,
     contextFavicon: null,
     // Reminder field
-    reminder: null  // { time: timestamp, notified: false }
+    reminder: null,  // { time: timestamp, notified: false }
+    // Review queue
+    reviewStatus: REVIEW_STATUS.NEW
   };
   
   return new Promise((resolve, reject) => {
@@ -147,7 +151,7 @@ export async function getNote(id) {
 }
 
 // Update note
-export async function updateNote(id, updates) {
+export async function updateNote(id, updates, options = {}) {
   await initDB();
 
   const note = await getNote(id);
@@ -156,10 +160,11 @@ export async function updateNote(id, updates) {
     return null;
   }
 
+  const touchUpdatedAt = options.touchUpdatedAt !== false;
   const updatedNote = {
     ...note,
     ...updates,
-    updatedAt: Date.now()
+    ...(touchUpdatedAt ? { updatedAt: Date.now() } : {})
   };
 
   return new Promise((resolve, reject) => {
@@ -431,7 +436,8 @@ export async function importNotes(jsonString) {
       contextUrl: item.contextUrl ?? null,
       contextTitle: item.contextTitle ?? null,
       contextFavicon: item.contextFavicon ?? null,
-      reminder: item.reminder ?? null
+      reminder: item.reminder ?? null,
+      reviewStatus: item.reviewStatus ?? REVIEW_STATUS.REVIEWED
     };
 
     await new Promise((resolve, reject) => {
