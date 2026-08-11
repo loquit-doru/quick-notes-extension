@@ -9,3 +9,17 @@ generate-icons.html
 
 # Local store/marketing assets (keep locally, don't version by default)
 screenshots/
+
+# Playwright QA artifacts
+node_modules/playwright-core/.local-browsers/
+# Persistent browser profiles the suites launch into. The e2e one is a real
+# Chrome profile — a few hundred files — so it must never reach the repo.
+tests/.pw-extension-profile/
+tests/.pw-extension-e2e-profile/
+tests/.pw-diag-profile/
+
+# Wrangler local state and build cache
+workers/.wrangler/
+test-results/
+playwright-report/
+blob-report/
