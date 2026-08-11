@@ -3,33 +3,98 @@
  *
  * Routes:
  *   GET  /check?id=<extensionId>
- *   POST /activate                 { extensionId, email }  — crypto restore
  *   POST /activate-stripe          { extensionId, email }  — card/Stripe restore
  *   POST /register-stripe-license  { extensionId, email }  — pre-link after payment
- *   POST /verify                   { extensionId, email, txHash }
- *   POST /webhook/stripe           (stub — future auto-register on payment)
+ *   POST /webhook/stripe           (signature-verified Stripe webhook)
  *   POST /admin/clear-rate-limit   { email } + Authorization: Bearer <ADMIN_DEV_TOKEN>
+ *   POST /admin/clear-devices      { email } + Authorization: Bearer <ADMIN_DEV_TOKEN>
  *
  * Deploy: cd workers && npx wrangler deploy
  * Secrets: wrangler secret put STRIPE_SECRET_KEY
  * Dev only: STRIPE_ALLOWLIST in wrangler.toml [vars]
  */
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+import {
+  bindDeviceSlot,
+  deviceIdLogPrefix,
+  licenseDebugLog,
+  maxDevicesFromEnv,
+  normalizeEmail,
+  parseDevicesList,
+  resolveDeviceId,
+} from './license-devices.js';
 
-const MAX_DEVICES_DEFAULT = 3;
 const QUICK_NOTES_PRICE_CENTS = 299;
 const STRIPE_RATE_LIMIT = 10;
 const STRIPE_RATE_WINDOW_SEC = 3600;
+const ADMIN_RATE_LIMIT = 20;
+const ADMIN_RATE_WINDOW_SEC = 60;
+const WEBHOOK_EVENT_TTL_SEC = 60 * 60 * 24 * 14;
+const STRIPE_SIGNATURE_TOLERANCE_SEC = 300;
+
+class RequestError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+    this.body = { success: false, error: message };
+  }
+}
+
+function parseAllowedOrigins(env) {
+  return String(env.CORS_ALLOW_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function buildCorsContext(request, env) {
+  const origin = (request.headers.get('Origin') || '').trim();
+  const headers = {
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Stripe-Signature, X-Admin-Token',
+    'Access-Control-Max-Age': '86400',
+  };
+  if (!origin) return { allowed: true, headers };
+
+  const normalized = origin.toLowerCase();
+  const allowlist = parseAllowedOrigins(env);
+  const isAllowed =
+    normalized.startsWith('chrome-extension://') || allowlist.includes(normalized);
+
+  if (isAllowed) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers.Vary = 'Origin';
+  }
+  return { allowed: isAllowed, headers };
+}
+
+async function readJsonBody(request) {
+  const contentType = (request.headers.get('Content-Type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) {
+    throw new RequestError(415, 'Content-Type must be application/json');
+  }
+  try {
+    return await request.json();
+  } catch {
+    throw new RequestError(400, 'Invalid JSON body');
+  }
+}
 
 export default {
   async fetch(request, env) {
+    const cors = buildCorsContext(request, env);
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
+      if (!cors.allowed) {
+        return new Response(JSON.stringify({ success: false, error: 'Origin not allowed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(null, { status: 204, headers: cors.headers });
+    }
+
+    if (!cors.allowed) {
+      return json({ success: false, error: 'Origin not allowed' }, 403, cors.headers);
     }
 
     const url = new URL(request.url);
@@ -37,52 +102,55 @@ export default {
 
     try {
       if (request.method === 'GET' && path === '/check') {
-        return json(await handleCheck(url.searchParams.get('id'), env));
-      }
-      if (request.method === 'POST' && path === '/activate') {
-        return json(await handleActivate(await request.json(), env, 'crypto'));
+        return json(await handleCheck(url.searchParams.get('id'), env), 200, cors.headers);
       }
       if (request.method === 'POST' && path === '/activate-stripe') {
         return json(
-          await handleActivateStripe(await request.json(), env, { countRateLimit: true })
+          await handleActivateStripe(await readJsonBody(request), env, { countRateLimit: true }),
+          200,
+          cors.headers
         );
       }
       if (request.method === 'POST' && path === '/register-stripe-license') {
         return json(
-          await handleActivateStripe(await request.json(), env, { countRateLimit: false })
+          await handleActivateStripe(await readJsonBody(request), env, { countRateLimit: false }),
+          200,
+          cors.headers
         );
       }
-      if (request.method === 'POST' && path === '/verify') {
-        return json(await handleVerify(await request.json(), env));
-      }
       if (request.method === 'POST' && path === '/webhook/stripe') {
-        return json(await handleStripeWebhook(request, env));
+        return json(await handleStripeWebhook(request, env), 200, cors.headers);
       }
       if (request.method === 'POST' && path === '/admin/clear-rate-limit') {
-        return json(await handleAdminClearRateLimit(await request.json(), request, env));
+        return json(
+          await handleAdminClearRateLimit(await readJsonBody(request), request, env),
+          200,
+          cors.headers
+        );
       }
-      return json({ success: false, error: 'Not found' }, 404);
+      if (request.method === 'POST' && path === '/admin/clear-devices') {
+        return json(
+          await handleAdminClearDevices(await readJsonBody(request), request, env),
+          200,
+          cors.headers
+        );
+      }
+      return json({ success: false, error: 'Not found' }, 404, cors.headers);
     } catch (err) {
+      if (err instanceof RequestError) {
+        return json(err.body, err.status, cors.headers);
+      }
       console.error(err);
-      return json({ success: false, error: 'Server error' }, 500);
+      return json({ success: false, error: 'Server error' }, 500, cors.headers);
     }
   },
 };
 
-function json(body, status = 200) {
+function json(body, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
-}
-
-function normalizeEmail(email) {
-  return (email || '').trim().toLowerCase();
-}
-
-function maxDevices(env) {
-  const n = parseInt(env.MAX_DEVICES || '', 10);
-  return Number.isFinite(n) && n > 0 ? n : MAX_DEVICES_DEFAULT;
 }
 
 async function handleCheck(extensionId, env) {
@@ -91,39 +159,75 @@ async function handleCheck(extensionId, env) {
   return { isPro: !!license };
 }
 
-async function handleActivate(body, env, method) {
-  const extensionId = body?.extensionId;
+async function handleAdminClearDevices(body, request, env) {
+  const auth = requireAdminToken(request, env);
+  if (!auth.ok) return auth.response;
+  const limited = await checkAdminRateLimit(request, env, 'clear-devices');
+  if (limited) return limited;
   const email = normalizeEmail(body?.email);
-  if (!extensionId || !email) {
-    return { success: false, error: 'Missing extensionId or email' };
-  }
-
-  const emailKey = `email:${email}`;
-  const existingId = await env.LICENSES.get(emailKey);
-  if (!existingId) {
-    return { success: false, error: 'No crypto license found for this email' };
-  }
-
-  return bindExtensionToEmail(env, extensionId, email, method || 'crypto');
+  if (!isValidEmail(email)) return { success: false, error: 'Missing or invalid email' };
+  const devicesKey = `devices:${email}`;
+  await env.LICENSES.delete(devicesKey);
+  licenseDebugLog(env, 'admin cleared devices', { email, devicesKey });
+  return { success: true, cleared: devicesKey };
 }
 
-async function handleAdminClearRateLimit(body, request, env) {
+function requireAdminToken(request, env) {
   const token = (env.ADMIN_DEV_TOKEN || '').trim();
   if (!token) {
-    return { success: false, error: 'Admin endpoint not configured (set ADMIN_DEV_TOKEN secret)' };
+    return { ok: false, response: { success: false, error: 'Admin endpoint not configured (set ADMIN_DEV_TOKEN secret)' } };
   }
   const auth = request.headers.get('Authorization') || '';
   const provided = auth.startsWith('Bearer ')
     ? auth.slice(7).trim()
     : (request.headers.get('X-Admin-Token') || '').trim();
-  if (!provided || provided !== token) {
-    return { success: false, error: 'Unauthorized' };
+  if (!provided || !timingSafeEqual(provided, token)) {
+    return { ok: false, response: { success: false, error: 'Unauthorized' } };
   }
+  return { ok: true };
+}
+
+async function handleAdminClearRateLimit(body, request, env) {
+  const auth = requireAdminToken(request, env);
+  if (!auth.ok) return auth.response;
+  const limited = await checkAdminRateLimit(request, env, 'clear-rate-limit');
+  if (limited) return limited;
   const email = normalizeEmail(body?.email);
-  if (!email) return { success: false, error: 'Missing email' };
+  if (!isValidEmail(email)) return { success: false, error: 'Missing or invalid email' };
   const key = stripeRateLimitKey(email);
   await env.LICENSES.delete(key);
   return { success: true, cleared: key };
+}
+
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function checkAdminRateLimit(request, env, action) {
+  const ipHeader = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const ip = ipHeader.split(',')[0].trim();
+  const key = `rate:admin:${action}:${ip}`;
+  const raw = await env.LICENSES.get(key);
+  const current = Number(raw || '0');
+  if (current >= ADMIN_RATE_LIMIT) {
+    return {
+      success: false,
+      error: `Admin rate limit exceeded. Try again in about ${ADMIN_RATE_WINDOW_SEC} seconds.`,
+    };
+  }
+  await env.LICENSES.put(key, String(current + 1), { expirationTtl: ADMIN_RATE_WINDOW_SEC });
+  return null;
 }
 
 async function handleActivateStripe(body, env, { countRateLimit = true } = {}) {
@@ -153,47 +257,141 @@ async function handleActivateStripe(body, env, { countRateLimit = true } = {}) {
     };
   }
 
-  await recordStripeLicenseByEmail(env, email, extensionId);
-  const result = await bindExtensionToEmail(env, extensionId, email, 'stripe');
+  const deviceId = resolveDeviceId(body);
+  const result = await bindExtensionToEmail(env, extensionId, email, 'stripe', deviceId);
+  if (result.success) {
+    await recordStripeLicenseByEmail(env, email, extensionId);
+  }
   if (countRateLimit && result.success) {
     await incrementStripeRateLimit(env, email);
   }
   return result;
 }
 
-async function handleVerify(body, env) {
-  const extensionId = body?.extensionId;
-  const email = normalizeEmail(body?.email);
-  const txHash = (body?.txHash || '').trim();
-  if (!extensionId || !email || !txHash) {
-    return { success: false, error: 'Missing extensionId, email, or txHash' };
-  }
-
-  const txKey = `tx:${txHash.toLowerCase()}`;
-  const seen = await env.LICENSES.get(txKey);
-  if (seen) {
-    return { success: false, error: 'Transaction already used' };
-  }
-
-  await env.LICENSES.put(txKey, extensionId);
-  await env.LICENSES.put(`email:${email}`, extensionId);
-  return bindExtensionToEmail(env, extensionId, email, 'crypto');
-}
-
-/** Stub for future Stripe webhook → auto-register on checkout.session.completed */
 async function handleStripeWebhook(request, env) {
-  const hasSecret = !!env.STRIPE_WEBHOOK_SECRET;
-  if (!hasSecret) {
+  const secret = String(env.STRIPE_WEBHOOK_SECRET || '').trim();
+  if (!secret) {
     return {
-      received: true,
+      received: false,
       processed: false,
-      message:
-        'Webhook stub. Set STRIPE_WEBHOOK_SECRET and implement signature verification before production use.',
+      error: 'Webhook secret not configured',
     };
   }
-  // TODO: verify Stripe-Signature, handle checkout.session.completed
-  await request.text();
-  return { received: true, processed: false, message: 'Not implemented yet' };
+  const payload = await request.text();
+  const signature = request.headers.get('Stripe-Signature') || '';
+  const validSignature = await verifyStripeWebhookSignature(payload, signature, secret);
+  if (!validSignature) {
+    return { received: true, processed: false, error: 'Invalid Stripe signature' };
+  }
+
+  let event;
+  try {
+    event = JSON.parse(payload);
+  } catch {
+    return { received: true, processed: false, error: 'Invalid webhook payload JSON' };
+  }
+
+  const eventId = String(event?.id || '').trim();
+  const eventType = String(event?.type || '').trim();
+  if (!eventId || !eventType) {
+    return { received: true, processed: false, error: 'Missing event id or type' };
+  }
+
+  const eventKey = `stripe-webhook:event:${eventId}`;
+  const alreadyProcessed = await env.LICENSES.get(eventKey);
+  if (alreadyProcessed) {
+    return { received: true, processed: true, duplicate: true, eventType };
+  }
+
+  const object = event?.data?.object || {};
+  const email = normalizeEmail(extractStripeEmail(object));
+  const extensionId = extractStripeExtensionId(object);
+
+  if (email) {
+    await env.LICENSES.put(`stripe-email:${email}`, '1');
+  }
+  if (email && extensionId) {
+    await recordStripeLicenseByEmail(env, email, extensionId);
+  }
+
+  await env.LICENSES.put(
+    eventKey,
+    JSON.stringify({
+      eventType,
+      processedAt: new Date().toISOString(),
+      email: email || null,
+      extensionId: extensionId || null,
+    }),
+    { expirationTtl: WEBHOOK_EVENT_TTL_SEC }
+  );
+
+  return {
+    received: true,
+    processed: true,
+    eventType,
+    emailCaptured: Boolean(email),
+    extensionLinked: Boolean(email && extensionId),
+  };
+}
+
+function extractStripeEmail(stripeObject) {
+  return (
+    stripeObject?.customer_email ||
+    stripeObject?.customer_details?.email ||
+    stripeObject?.billing_details?.email ||
+    stripeObject?.receipt_email ||
+    stripeObject?.charges?.data?.[0]?.billing_details?.email ||
+    stripeObject?.metadata?.email ||
+    ''
+  );
+}
+
+function extractStripeExtensionId(stripeObject) {
+  const metadata = stripeObject?.metadata || {};
+  const extensionId = String(metadata.extensionId || metadata.extension_id || '').trim();
+  if (!extensionId) return null;
+  return /^qn_[a-zA-Z0-9_-]+$/.test(extensionId) ? extensionId : null;
+}
+
+function parseStripeSignature(signatureHeader) {
+  const pairs = String(signatureHeader || '')
+    .split(',')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  const parsed = { timestamp: null, signatures: [] };
+  for (const pair of pairs) {
+    const [key, value] = pair.split('=');
+    if (!key || !value) continue;
+    if (key === 't') parsed.timestamp = Number(value);
+    if (key === 'v1') parsed.signatures.push(value);
+  }
+  return parsed;
+}
+
+async function hmacSha256Hex(secret, payload) {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(payload));
+  return Array.from(new Uint8Array(signature))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function verifyStripeWebhookSignature(payload, signatureHeader, secret) {
+  const parsed = parseStripeSignature(signatureHeader);
+  if (!parsed.timestamp || parsed.signatures.length === 0) return false;
+  const age = Math.abs(Math.floor(Date.now() / 1000) - parsed.timestamp);
+  if (age > STRIPE_SIGNATURE_TOLERANCE_SEC) return false;
+
+  const expected = await hmacSha256Hex(secret, `${parsed.timestamp}.${payload}`);
+  return parsed.signatures.some((candidate) => timingSafeEqual(candidate, expected));
 }
 
 /** KV key: rate:stripe-activate:{normalizedEmail} — only successful restores increment count */
@@ -253,8 +451,13 @@ async function recordStripeLicenseByEmail(env, email, extensionId) {
   await env.LICENSES.put(`stripe-email:${email}`, '1');
 }
 
-async function bindExtensionToEmail(env, extensionId, email, method) {
-  const max = maxDevices(env);
+async function bindExtensionToEmail(env, extensionId, email, method, deviceId) {
+  const max = maxDevicesFromEnv(env);
+  const slotDeviceId = (deviceId || extensionId || '').trim();
+  if (!extensionId || !email || !slotDeviceId) {
+    return { success: false, error: 'Missing extensionId, email, or deviceId' };
+  }
+
   const emailKey = `email:${email}`;
   let primaryId = await env.LICENSES.get(emailKey);
   if (!primaryId) {
@@ -263,28 +466,39 @@ async function bindExtensionToEmail(env, extensionId, email, method) {
   }
 
   const devicesKey = `devices:${email}`;
-  let devices = [];
-  try {
-    devices = JSON.parse((await env.LICENSES.get(devicesKey)) || '[]');
-  } catch {
-    devices = [];
+  const devices = parseDevicesList(await env.LICENSES.get(devicesKey));
+  const bind = bindDeviceSlot({
+    devices,
+    deviceId: slotDeviceId,
+    extensionId,
+    max,
+  });
+
+  licenseDebugLog(env, 'bind device slot', {
+    email,
+    deviceIdPrefix: deviceIdLogPrefix(slotDeviceId),
+    devicesUsed: bind.devicesUsed,
+    maxDevices: max,
+    reusedDevice: bind.reusedDevice ?? false,
+    ok: bind.ok,
+  });
+
+  if (!bind.ok) {
+    return {
+      success: false,
+      code: bind.code,
+      error: bind.error,
+      devicesUsed: bind.devicesUsed,
+      maxDevices: bind.maxDevices,
+    };
   }
-  if (!devices.includes(extensionId)) {
-    if (devices.length >= max && !devices.includes(extensionId)) {
-      return {
-        success: false,
-        error: `Device limit reached (${max}). Remove a device or contact support.`,
-        devicesUsed: devices.length,
-        maxDevices: max,
-      };
-    }
-    devices.push(extensionId);
-    await env.LICENSES.put(devicesKey, JSON.stringify(devices));
-  }
+
+  await env.LICENSES.put(devicesKey, JSON.stringify(bind.devices));
 
   const license = {
     email,
     method,
+    deviceId: slotDeviceId,
     activatedAt: new Date().toISOString(),
     primaryExtensionId: primaryId,
   };
@@ -292,8 +506,9 @@ async function bindExtensionToEmail(env, extensionId, email, method) {
 
   return {
     success: true,
-    devicesUsed: devices.length,
+    devicesUsed: bind.devicesUsed,
     maxDevices: max,
+    reusedDevice: bind.reusedDevice === true,
   };
 }
 

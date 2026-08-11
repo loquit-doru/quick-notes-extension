@@ -14,6 +14,9 @@ id = "6f886756a38a45ac9f325770aa2cebc9"
 # After changing this file: cd workers && wrangler deploy
 STRIPE_ALLOWLIST = ""
 MAX_DEVICES = "3"
+# Comma-separated HTTPS origins for browser CORS (chrome-extension://* is allowed automatically).
+# Example: "https://quicknotes-landing.vercel.app"
+CORS_ALLOW_ORIGINS = ""
 
 # Production (required for automatic restore for all paying customers):
 #   wrangler secret put STRIPE_SECRET_KEY
