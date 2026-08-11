@@ -15,22 +15,27 @@ const PRO_API = process.env.PRO_API || 'https://quick-notes-pro.apiworkersdev.wo
 async function main() {
   const email = process.argv[2];
   let extensionId = process.argv[3];
+  let deviceId = process.argv[4];
 
   if (!email) {
-    console.error('Usage: node scripts/grant-pro.js <email> [extensionId]');
+    console.error('Usage: node scripts/grant-pro.js <email> [extensionId] [deviceId]');
     process.exit(1);
   }
 
   if (!extensionId) {
     extensionId = `qn_grant_${Date.now()}`;
     console.log('No extensionId provided; using:', extensionId);
-    console.log('Customer should use restore in extension, or pass their real extensionId from chrome.storage.local');
+    console.log('Customer should use restore in extension, or pass extensionId + deviceId from chrome.storage.local');
+  }
+  if (!deviceId) {
+    deviceId = extensionId;
+    console.log('No deviceId provided; using extensionId as device slot:', deviceId);
   }
 
   const res = await fetch(`${PRO_API}/activate-stripe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ extensionId, email }),
+    body: JSON.stringify({ extensionId, deviceId, email }),
   });
 
   const text = await res.text();
