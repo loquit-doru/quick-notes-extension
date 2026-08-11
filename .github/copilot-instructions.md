@@ -6,7 +6,7 @@
 
 ## Big Picture
 - **Project**: Quick Notes — the fastest notes Chrome extension. Instant capture, zero friction.
-- **Stack**: Vanilla JavaScript, Chrome Extension Manifest V3, IndexedDB, ExtPay + crypto payments.
+- **Stack**: Vanilla JavaScript, Chrome Extension Manifest V3, IndexedDB, ExtensionPay/Stripe payments.
 - **Key Features**: Notes with folders, PIN lock, reminders, trash with retention, keyboard-first UX, pro/free model.
 
 ## Architecture
@@ -16,7 +16,7 @@
 | `manifest.json` | Extension configuration (Manifest V3) |
 | `background/service-worker.js` | Global shortcuts, context capture, reminders |
 | `popup/popup.js` | Main popup UI (~2154 lines) |
-| `popup/pro.js` | Pro feature handling, ExtPay + crypto payments |
+| `popup/pro.js` | Pro feature handling, ExtensionPay/Stripe restore |
 | `storage/db.js` | IndexedDB storage layer (~515 lines) |
 | `lib/ExtPay.js` | ExtensionPay payment library |
 | `worker/` | Cloudflare Worker backend |
@@ -24,7 +24,7 @@
 ## Implementation Guidelines
 - Follow Manifest V3 patterns (service workers, not background pages).
 - Use `chrome.storage.local` for settings, IndexedDB (via `storage/db.js`) for notes data.
-- Handle pro/free feature gating via ExtPay + crypto (Base network).
+- Handle pro/free feature gating via ExtensionPay/Stripe restore flow.
 - Keep `popup.js` modular and keyboard-first.
 - Performance is critical — track load times from start.
 
@@ -46,7 +46,7 @@ Before considering a feature "done", verify the full chain:
 
 ### Pro/Free Model
 ```javascript
-// ExtPay + crypto dual payment
+// ExtensionPay payment bridge
 const extpay = ExtPay('quick-notes-new');
 
 async function isPro() {
@@ -59,7 +59,6 @@ async function isPro() {
 ```
 - **Trial**: 7 days full access, tracked via `trialStartDate` in `chrome.storage.local`.
 - **Trash retention**: FREE = 1 day, PRO = 7 days.
-- **Crypto**: Base network, 0.001 ETH or 3 USDC.
 
 ### Reminders
 - Use `chrome.alarms` API for scheduling.

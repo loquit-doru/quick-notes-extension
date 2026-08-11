@@ -1,6 +1,28 @@
-# Release notes (Chrome Web Store)
+# Release notes (Chrome Web Store & Edge Add-ons)
 
-Copy the block below into **Developer Dashboard → Quick Notes → Package → What's new** when uploading **v1.7.0**.
+Copy the matching block into **Developer Dashboard → Quick Notes → Package → What's new**.
+
+---
+
+## v1.7.2 — paste into dashboard (English)
+
+```
+• Long notes keep saving — the 500-character limit that could discard your text is gone
+• Free plan now includes 10 notes, matching what the listing has always promised
+• Trial counts only the days you actually open Quick Notes, so it waits for you
+• Pro features are now labelled as Pro everywhere, including the screenshots
+• Bug fixes and stability improvements
+```
+
+## v1.7.2 — Romanian (pentru suport / notele tale)
+
+```
+• Notele lungi se salvează — limita de 500 de caractere, care putea pierde text, a dispărut
+• Planul gratuit are acum 10 note, cât promitea dintotdeauna descrierea
+• Trialul numără doar zilele în care chiar deschizi extensia
+• Funcțiile Pro sunt marcate ca Pro peste tot, inclusiv în capturi
+• Corecții de erori și stabilitate
+```
 
 ---
 

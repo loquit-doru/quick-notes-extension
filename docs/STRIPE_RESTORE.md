@@ -30,13 +30,14 @@ wrangler deploy
 |----------|---------|
 | `MAX_DEVICES` | Devices per email (default `3`) |
 | `STRIPE_ALLOWLIST` | **Dev / emergency only** — leave `""` in production; comma-separated emails bypass Stripe API |
+| `CORS_ALLOW_ORIGINS` | Optional comma-separated HTTPS origins for frontend calls; `chrome-extension://*` is allowed automatically |
 
 ### Secrets (never commit)
 
 | Secret | Command |
 |--------|---------|
 | `STRIPE_SECRET_KEY` | `wrangler secret put STRIPE_SECRET_KEY` |
-| `STRIPE_WEBHOOK_SECRET` | Optional, for future `POST /webhook/stripe` |
+| `STRIPE_WEBHOOK_SECRET` | Required for `POST /webhook/stripe` signature verification |
 
 ## ExtensionPay slug
 
@@ -49,9 +50,8 @@ wrangler deploy
 | GET | `/check?id=<extensionId>` | Is this install licensed? |
 | POST | `/activate-stripe` | Restore by Stripe receipt email (rate-limited) |
 | POST | `/register-stripe-license` | Pre-link after payment (no rate limit) |
-| POST | `/activate` | Crypto restore (unchanged) |
-| POST | `/webhook/stripe` | Stub — future auto-register on `checkout.session.completed` |
-| POST | `/admin/clear-rate-limit` | Dev: clear rate limit for one email (`Authorization: Bearer` + `ADMIN_DEV_TOKEN` secret) |
+| POST | `/webhook/stripe` | Signature-verified Stripe webhook; records paid emails and links known extension IDs |
+| POST | `/admin/clear-rate-limit` | Dev: clear rate limit for one email (`Authorization: Bearer` + `ADMIN_DEV_TOKEN` secret, + basic per-IP rate limit) |
 
 ### Stripe verification (`/activate-stripe`)
 
@@ -83,7 +83,6 @@ Most card checkouts use **ExtensionPay** (`ExtPay('quick-notes-new')` in `popup/
 |----------|----------------|
 | Your Stripe (direct Checkout / Payment Link) | `/activate-stripe` with receipt email + valid `STRIPE_SECRET_KEY` on the **same** Stripe account |
 | ExtensionPay hosted checkout | **Restore purchase** / same-profile `getUser()` — **not** developer `STRIPE_SECRET_KEY` |
-| Crypto (Base) | `/activate` with email + tx hash (unchanged) |
 | Support / dev only | Empty allowlist in prod; temporary `STRIPE_ALLOWLIST` or `node scripts/grant-pro.js` |
 
 If Stripe Dashboard (your account) shows nothing but the customer has an ExtensionPay receipt, use ExtensionPay restore — `/activate-stripe` will correctly return “No Stripe purchase found”.
@@ -109,7 +108,7 @@ Content-Type: application/json
 
 ### Manual restore UI
 
-**Restore purchase** runs: ExtensionPay → server → Stripe email (input or stored). Crypto tab still uses `/activate` only.
+**Restore purchase** runs: ExtensionPay → server → Stripe email (input or stored).
 
 ## What survives reinstall
 
@@ -130,8 +129,6 @@ Reinstall / new device
   → popup init: ExtPay getUser → /check → silent Stripe (payerEmail)
   → or user: "Restore purchase" (same chain + email input)
 
-Crypto (unchanged)
-  → verify tx → POST /activate { email }
 ```
 
 ## Manual grant (support / dev)
@@ -163,6 +160,43 @@ npx wrangler kv key delete "rate:stripe-activate:buyer@example.com" --binding=LI
 
 Email must be **lowercase** (same as `normalizeEmail` in the Worker). Re-run grant or let the user click **Restore purchase** once after clearing.
 
+### Reset device activations (3-device limit)
+
+Device slots are stored at `devices:{normalizedEmail}` in KV (values are stable `deviceId` strings from `chrome.storage.local`, not note data).
+
+**Preferred (after deploy + `ADMIN_DEV_TOKEN` secret):**
+
+```bash
+ADMIN_DEV_TOKEN=your-secret node scripts/clear-devices-admin.js buyer@example.com
+```
+
+Worker route: `POST /admin/clear-devices` with `Authorization: Bearer <ADMIN_DEV_TOKEN>`.
+
+**Manual KV (no admin token):**
+
+```bash
+cd workers
+npx wrangler kv key delete "devices:buyer@example.com" --binding=LICENSES --remote
+```
+
+Then the user can **Restore purchase** once; repeat restores from the same profile do not consume extra slots (idempotent `deviceId`).
+
+**Debug logging (Worker):** set `LOG_LICENSE_DEBUG = "1"` in `workers/wrangler.toml` [vars], deploy, tail logs — logs normalized email, `deviceId` prefix (8 chars), device count, reused vs new slot. Never enable in production long-term.
+
+### Legacy crypto KV cleanup (`tx:*`)
+
+Removed crypto `/verify` stored one-time keys as `tx:{txHash}` in the same `LICENSES` namespace. Stripe restore does not use them.
+
+**Admin script (dry-run by default):**
+
+```bash
+cd workers
+node scripts/kv-cleanup-legacy-crypto.mjs --remote
+node scripts/kv-cleanup-legacy-crypto.mjs --execute --remote
+```
+
+Full steps, protected prefixes, and safety rules: [KV_LEGACY_CLEANUP.md](./KV_LEGACY_CLEANUP.md).
+
 ## Dev-only local unlock
 
 Extension popup DevTools (not for customers):
@@ -185,15 +219,14 @@ await QuickNotesPro.grantProLocally()
 |---|----------------|------------------|
 | 1 | **ExtensionPay** (card în extensie) | Deschide extensia pe **același profil Chrome** sau **Restaurează achiziția** (login ExtensionPay). Automat via `getUser()` — **fără** secretul tău Stripe. |
 | 2 | **Stripe-ul tău** (Payment Link / Checkout direct) | **Restaurează achiziția** + email de pe chitanța Stripe → Worker verifică cu `STRIPE_SECRET_KEY` (`/activate-stripe`). |
-| 3 | **Crypto** (Base) | Tab crypto: email + hash tranzacție → `/activate`. |
 
 ### Ce trebuie să facă dezvoltatorul
 
 1. `cd workers && wrangler secret put STRIPE_SECRET_KEY` — `sk_live_...` sau `sk_test_...` din **același** cont Stripe unde apar plățile card (Dashboard → Developers → API keys).
 2. `STRIPE_ALLOWLIST = ""` în `wrangler.toml`, apoi `wrangler deploy`.
-3. Dacă **toate** plățile card merg prin ExtensionPay, doar calea **#1** funcționează pentru clienți; `/activate-stripe` cu secretul tău nu vede acele plăți decât dacă integrezi webhook Stripe (viitor).
+3. Dacă **toate** plățile card merg prin ExtensionPay, doar calea **#1** funcționează pentru clienți; `/activate-stripe` cu secretul tău nu vede acele plăți.
 4. Slug ExtensionPay = `EXTPAY_EXTENSION_ID` (`quick-notes-new`) aliniat cu dashboard-ul ExtensionPay.
 
-### Webhook (viitor)
+### Webhook (implementat)
 
-`POST /webhook/stripe` este stub. După implementare + `STRIPE_WEBHOOK_SECRET`, plățile noi pe contul tău Stripe pot înregistra licența automat.
+`POST /webhook/stripe` validează semnătura Stripe (`Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`), dedupe pe `event.id`, și înregistrează `stripe-email:{email}`. Dacă metadata include `extensionId`, salvează și legătura în `stripe-license:{email}`.

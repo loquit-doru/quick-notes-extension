@@ -1,12 +1,21 @@
-# Chrome Web Store — release checklist
+# Browser store release checklist (Chrome Web Store & Microsoft Edge Add-ons)
 
-Quick Notes v**1.7.0** (see `manifest.json`). Worker API: `https://quick-notes-pro.apiworkersdev.workers.dev` (not bundled in the zip).
+Quick Notes v**1.7.2** (see `manifest.json`). Worker API: `https://quick-notes-pro.apiworkersdev.workers.dev` (not bundled in the zip).
+
+**Build the ZIP with `npm run build:zip`** — it packs an explicit include list and refuses to overwrite an existing version. Then `npm run check:zip` to validate it. To prove the packaged artifact actually runs (not just the working tree), extract it and point the E2E suite at it:
+
+```powershell
+Expand-Archive quick-notes-v1.7.2.zip -DestinationPath $env:TEMP\qn-check -Force
+$env:QN_EXTENSION_PATH = "$env:TEMP\qn-check"; npm run test:extension:e2e
+```
+
+**Same package for both stores:** Chrome and Edge use the **identical MV3 zip** built from this repo. Upload the same `quick-notes-v{version}.zip` to each partner dashboard.
 
 **Already published?** Skip first-time submission steps — use [Update existing listing](#update-existing-listing) below.
 
 ## How to verify (maintainer)
 
-1. `manifest.json` → `version` is **1.7.0**, no `homepage_url` (optional; omit if you have no stable marketing URL).
+1. `manifest.json` → `version` is **1.7.1**, no `homepage_url` (optional; use GitHub Pages `index.html` if hosted).
 2. Build zip (below) → load unpacked from extracted folder OR upload zip in [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole).
 3. Privacy policy URL returns **200** over HTTPS (see [Privacy policy URL](#privacy-policy-url)).
 4. Worker: `STRIPE_ALLOWLIST=""` in `workers/wrangler.toml` and `wrangler secret put STRIPE_SECRET_KEY` set → `cd workers && wrangler deploy`.
@@ -109,7 +118,7 @@ The store package is the **extension root only** — not the Cloudflare Worker.
 ### PowerShell (from repo root)
 
 ```powershell
-$version = "1.7.0"
+$version = "1.7.1"
 $root = "c:\Users\quit\Desktop\quick-notes"
 $staging = Join-Path $env:TEMP "quick-notes-cws-pack"
 $zip = Join-Path $root "quick-notes-v$version.zip"
@@ -178,8 +187,7 @@ The extension does not modify web pages except the ExtensionPay checkout domain 
 | Permission | Justification |
 |------------|---------------|
 | **storage** | Save notes metadata, settings, trial state, PIN hash, reminder schedules, and local backup snapshots in `chrome.storage.local`. |
-| **activeTab** | When the user enables “Include page context”, read the active tab’s URL and title once to attach to a new note. |
-| **tabs** | Query the active tab for optional context capture when creating a note. |
+| **activeTab** | When the user enables “Include page context”, read the active tab’s URL, title, and favicon once to attach to a new note (popup only, after user opens the extension). |
 | **alarms** | Schedule note reminders at user-chosen date/time. |
 | **notifications** | Display reminder notifications when alarms fire; notify when an extension update is ready or applied. |
 
@@ -205,7 +213,6 @@ Run on a **clean Chrome profile** (or incognito guest with only this extension):
 
 - [ ] ExtensionPay test purchase OR dev grant — Pro unlocks
 - [ ] **Restore purchase** (card email) works with production worker + Stripe secret
-- [ ] Crypto path (if enabled): verify tx → Pro unlocks
 
 ### Backup & data
 
@@ -240,7 +247,7 @@ Features to mention (see `STORE_LISTING.md`):
 - Local-first notes (IndexedDB)
 - Multi-line notes in editor
 - Folders, PIN, search — **Pro**
-- Card (ExtensionPay) + crypto license API
+- Card checkout + restore purchase flow (ExtensionPay/Stripe)
 - **Restore purchase** (Stripe email / ExtensionPay)
 - **Backup & export** (JSON); Pro auto-backup on device
 - Reminders (alarms + notifications)

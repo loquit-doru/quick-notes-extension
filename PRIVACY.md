@@ -1,55 +1,76 @@
-# Quick Notes - Privacy Policy
+# Quick Notes — Privacy Policy
 
-Last updated: May 16, 2026
+Last updated: May 26, 2026
 
-## Overview
+## Summary
 
-Quick Notes is committed to protecting your privacy. Notes stay on your device unless you export them.
+Quick Notes stores your notes **locally in your browser**. By default, we do **not** receive your note text or browsing history. Optional local usage insights can store minimal funnel counters **on your device only**.
 
-## Data Collection
+If you choose optional **Pro payment or license restore**, limited data (such as email and extension/device identifiers) may be sent to third-party payment or license services — never your note contents.
 
-**We do NOT collect:**
+## What stays on your device
 
-- Personal information
-- Browsing history (beyond what you choose to save as note context)
-- Note contents on our servers
-- Usage analytics
-- Any identifiable data from your notes
+- Note text and titles — **IndexedDB** (`QuickNotesDB`)
+- Folders and trash — **IndexedDB**
+- Settings, trial state, reminder schedules, and a **hashed PIN** (if you enable PIN lock) — **browser extension local storage**
+- Optional **page context** (URL, page title, favicon) saved **only when you create a note with “Include page context” enabled** — stored locally with that note
+- **Review status** (new / reviewed / archived) for your inbox workflow — stored locally on each note
 
-## Data Storage
+Notes do **not** leave your browser unless **you** export them (JSON, Markdown, or plain text).
 
-- Notes, folders, and trash are stored **locally** in **IndexedDB** inside your browser.
-- Settings, trial dates, PIN hash, and reminder schedules are stored in **chrome.storage.local**.
-- Notes never leave your browser unless you explicitly export them.
-- No cloud sync — we do not receive your note text by default.
+**Page Memory** matches notes to the current page or site **on your device only** — no URLs or titles are sent to Quick Notes servers.
 
-## Permissions Used
+## What Quick Notes does not do
 
-| Permission | Why |
-|------------|-----|
-| **storage** | Save settings, trial state, reminders, and license flags locally |
-| **activeTab** | Capture page URL/title when you create a note with context |
-| **tabs** | Read the active tab for context capture |
-| **alarms** | Schedule note reminders while the extension is installed |
-| **notifications** | Show reminder alerts at the time you set |
+- **Does not** collect, transmit, sell, or share your note content with Quick Notes servers (we have no note cloud)
+- **Does not** track your browsing history
+- **Does not** send analytics, advertising trackers, or telemetry SDKs to Quick Notes servers
+- **Does not** require an account to use the free product
 
-## Third-Party Services
+## Permissions (Manifest V3)
 
-- **ExtensionPay** — Card payments only. Payment details are handled by ExtensionPay/Stripe; we do not store card numbers.
-- **License API** (`https://quick-notes-pro.apiworkersdev.workers.dev`) — Used only when you verify a crypto payment or restore a license. Sends your email and/or transaction hash to check activation; does not receive note contents.
-- **Base Network** — Public blockchain lookup for crypto payment verification (transaction hash only).
+| Permission | Why it is needed |
+|------------|------------------|
+| **storage** | Save settings, trial state, reminders, license flags, and local backup snapshots |
+| **activeTab** | When you open the popup and create a note, optionally read the **current tab’s** URL, title, and favicon for note context |
+| **alarms** | Schedule note reminders at times you choose |
+| **notifications** | Show reminder alerts and optional extension update notices |
+
+There is **no** broad `tabs` permission and **no** host permission to read all websites.
+
+## Third-party services (optional — Pro / payments only)
+
+These apply **only** if you use paid upgrade or restore features:
+
+| Service | Purpose | Data involved |
+|---------|---------|---------------|
+| **ExtensionPay / Stripe** | Card checkout for Pro | Payment handled by Stripe; Quick Notes does **not** store card numbers |
+| **License API** (`quick-notes-pro.apiworkersdev.workers.dev`) | Validate Stripe/ExtensionPay restore and device activation | Extension ID, device ID, email — **not** note contents |
+
+## Optional local usage insights
+
+If enabled in Settings, Quick Notes stores a minimal local funnel log (for example:
+install, first open, first note, reminder created, paywall viewed, upgrade click,
+purchase restore). This data:
+
+- stays in `chrome.storage.local` on this device
+- does **not** include note content
+- is not transmitted to Quick Notes servers
+- can be disabled anytime in Settings → Privacy & Trust
+
+ExtensionPay runs a content script on `https://extensionpay.com/*` only during checkout.
 
 ## Contact
 
-For privacy concerns: **quicknotes.extension@gmail.com**
+Privacy questions: **quicknotes.extension@gmail.com**
 
 ## Changes
 
-We may update this policy. Changes will be posted here and in `privacy.html`.
+We may update this policy. The latest version is in this file and in `privacy.html`.
 
 ## How to verify
 
-1. Open `chrome://extensions` → Quick Notes → **Details** → review permissions (storage, activeTab, tabs, alarms, notifications).
-2. Open DevTools on the popup → **Application** → **IndexedDB** → `QuickNotesDB` — your notes are stored locally.
-3. Disconnect from the internet and use the extension — notes still load (local storage).
-4. Export notes (Settings → JSON) — file contains only what you saved; no account required.
+1. Open your browser’s extension details for Quick Notes and review permissions.
+2. Open DevTools on the popup → **Application** → **IndexedDB** → `QuickNotesDB` — notes are local.
+3. Disconnect from the internet — notes still load (local storage).
+4. Export notes from Settings — the file contains only what you saved.
