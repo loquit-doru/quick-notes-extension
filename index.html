@@ -3,121 +3,44 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quick Notes — Capture Notes Without Leaving Your Tab</title>
-  <meta name="description" content="Capture ideas while browsing. Local-first notes with no account, no cloud sync, and optional Pro for power users.">
-  <link rel="icon" href="icons/qn-32.png" type="image/png">
+  <title>Quick Notes</title>
+
+  <!-- This page exists only because GitHub Pages serves the repository root, and
+       privacy.html has to live here for the store listings. The real site is on
+       Vercel; two landing pages for one product split the search signal, so this
+       one points there and stays out of the index. -->
+  <link rel="canonical" href="https://getquicknotes.vercel.app/">
+  <meta name="robots" content="noindex, follow">
+  <meta http-equiv="refresh" content="0; url=https://getquicknotes.vercel.app/">
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #0f172a;
-      background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
-      line-height: 1.6;
+      background: #0b1020;
+      color: #e6ebff;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+      padding: 24px;
     }
-    .wrap { max-width: 960px; margin: 0 auto; padding: 48px 20px 64px; }
-    header { text-align: center; margin-bottom: 40px; }
-    .logo { font-size: 48px; margin-bottom: 8px; }
-    h1 { font-size: 2.25rem; margin-bottom: 12px; color: #1e1b4b; }
-    .lead { font-size: 1.125rem; color: #475569; max-width: 640px; margin: 0 auto 28px; }
-    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 32px; }
-    .btn {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 12px 20px; border-radius: 10px; font-weight: 600; text-decoration: none;
-      border: 1px solid transparent; transition: transform .15s ease;
-    }
-    .btn:hover { transform: translateY(-1px); }
-    .btn-chrome { background: #111827; color: #fff; }
-    .btn-edge { background: #0078d4; color: #fff; }
-    .card {
-      background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
-      padding: 24px; margin-bottom: 20px; box-shadow: 0 8px 30px rgba(15, 23, 42, .06);
-    }
-    h2 { font-size: 1.25rem; margin-bottom: 12px; color: #312e81; }
-    ul { margin-left: 20px; color: #334155; }
-    li { margin-bottom: 8px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-    .shot {
-      border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; background: #0f172a;
-      min-height: 180px; display: flex; align-items: center; justify-content: center; color: #94a3b8;
-      font-size: 14px; padding: 16px; text-align: center;
-    }
-    footer { text-align: center; color: #64748b; font-size: 14px; margin-top: 32px; }
-    footer a { color: #6366f1; }
-    .price { color: #475569; font-size: 15px; margin-top: 8px; }
+    a { color: #a78bfa; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="logo" aria-hidden="true">⚡</div>
-      <h1>Quick Notes</h1>
-      <p class="lead">Built for people who work in browser tabs all day: capture ideas quickly, keep notes local, and upgrade to Pro only if you outgrow free limits.</p>
-      <div class="cta">
-        <!-- Replace href values with your live listing URLs when published -->
-        <a class="btn btn-chrome" id="add-chrome" href="https://chromewebstore.google.com/search/Quick%20Notes%20loquit">Add to Chrome</a>
-        <a class="btn btn-edge" id="add-edge" href="https://microsoftedge.microsoft.com/addons/search?quick%20notes">Add to Edge</a>
-      </div>
-    </header>
+  <main>
+    <h1>Quick Notes</h1>
+    <p>
+      Taking you to
+      <a href="https://getquicknotes.vercel.app/">getquicknotes.vercel.app</a>&hellip;
+    </p>
+    <p><a href="privacy.html">Privacy policy</a></p>
+  </main>
 
-    <section class="card">
-      <h2>Why Quick Notes</h2>
-      <ul>
-        <li>Capture notes without switching to a full notes app</li>
-        <li>No account required — start immediately</li>
-        <li>Notes stored locally in your browser (IndexedDB)</li>
-        <li>Optional page URL and title saved with each note</li>
-        <li>Core flow stays free; Pro is for heavier daily use</li>
-      </ul>
-    </section>
-
-    <section class="grid">
-      <div class="card">
-        <h2>Free</h2>
-        <ul>
-          <li>7-day full access trial on install</li>
-          <li>Then up to 10 notes, any length</li>
-          <li>Export JSON, Markdown, and plain text</li>
-          <li>Reminders and themes</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h2>Pro (one-time purchase)</h2>
-        <ul>
-          <li>Unlimited notes</li>
-          <li>Search, folders, and PIN lock</li>
-          <li>Longer trash retention and on-device auto-backup</li>
-        </ul>
-        <p class="price">Pricing shown in the extension upgrade screen at purchase time.</p>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>Screenshots</h2>
-      <p style="color:#475569;margin-bottom:12px;">Use the in-extension UI or <code>screenshots.html</code> in the repo to capture store assets. Replace this placeholder when PNG screenshots are ready.</p>
-      <div class="grid">
-        <div class="shot">Main list view</div>
-        <div class="shot">Editor with optional page context</div>
-        <div class="shot">Settings &amp; backup</div>
-      </div>
-    </section>
-
-    <section class="card" id="privacy">
-      <h2>Privacy</h2>
-      <ul>
-        <li>Notes stay locally in your browser — not on our servers</li>
-        <li>We do not collect, transmit, sell, or share note content</li>
-        <li>We do not track browsing history</li>
-        <li>We do not use analytics</li>
-        <li>Optional page context is saved locally with your note only when you enable it</li>
-        <li>Pro payments may use ExtensionPay/Stripe and license restore APIs — we do not store card details</li>
-      </ul>
-      <p style="margin-top:12px;"><a href="privacy.html">Full privacy policy</a></p>
-    </section>
-
-    <footer>
-      <p>Quick Notes — browser extension for Chromium-based browsers (Chrome, Edge, and others).</p>
-      <p><a href="privacy.html">Privacy</a> · <a href="https://github.com/loquit-doru/quick-notes-extension">Source</a></p>
-    </footer>
-  </div>
+  <script>
+    // replace() rather than assign() so Back does not bounce the visitor here again.
+    location.replace('https://getquicknotes.vercel.app/');
+  </script>
 </body>
 </html>
