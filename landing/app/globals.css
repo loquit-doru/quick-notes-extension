@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  --background: #070b18;
+  --foreground: #e2e8f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.35);
+  color: #fff;
+}
+
+/* Accessibility: consistent keyboard focus treatment */
+:focus-visible {
+  outline: 2px solid rgb(167 139 250 / 0.95);
+  outline-offset: 3px;
+}
+
+/* Make link state visible beyond color alone */
+a {
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
