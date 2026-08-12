@@ -20,7 +20,8 @@ export function Screenshots() {
             See Quick Notes in action
           </h2>
           <p className="mt-4 text-slate-300">
-            Real extension screens: quick capture, folders, reminders, and settings.
+            Real extension screens: quick capture, search, folders, and local-only
+            storage. Pro features are marked as Pro.
           </p>
         </div>
 
