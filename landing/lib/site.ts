@@ -7,6 +7,13 @@ export const EDGE_ADDONS_URL =
 
 export const CONTACT_MAILTO = "mailto:quicknotes.extension@gmail.com" as const;
 
+/**
+ * Canonical origin, shared by the metadata, sitemap and robots routes so they
+ * cannot drift apart. Set NEXT_PUBLIC_SITE_URL to point a deploy elsewhere.
+ */
+export const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://getquicknotes.vercel.app";
+
 export const site = {
   name: "Quick Notes",
   title: "Quick Notes — Capture Notes Without Leaving Your Tab",
