@@ -9,6 +9,7 @@
     "gen-icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-png-icons.ps1",
     "gen:screenshots": "node scripts/ensure-playwright-browsers.js && node scripts/gen-screenshots.mjs",
     "build:zip": "node scripts/build-zip.mjs",
+    "deploy:landing": "node scripts/deploy-landing.mjs",
     "check:js": "node scripts/check-js.js",
     "check:manifest": "node scripts/validate-extension.js",
     "check:zip": "node scripts/validate-zip.js",

@@ -44,6 +44,20 @@ npm run start
 
 ## Deploy to Vercel
 
+> **Deploy with `npm run deploy:landing` from the repo root, not `vercel --prod`.**
+>
+> `getquicknotes.vercel.app`, `quicknotesbrowser.vercel.app` and
+> `tryquicknotes.vercel.app` were assigned by hand, so they are aliases rather
+> than project production domains. A plain production deploy moves the project's
+> own domains and leaves these three on the previous build — the main address
+> then serves stale content with no error anywhere. `deploy:landing` deploys and
+> repoints all three.
+>
+> To retire the script: add those three names under **Project Settings → Domains**
+> in Vercel. Once they are production domains they follow every deploy, and
+> `vercel --prod` becomes safe again.
+
+
 ### Option A — Vercel Dashboard
 
 1. Import the **quick-notes** Git repository on [vercel.com](https://vercel.com).
