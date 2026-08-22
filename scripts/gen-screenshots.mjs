@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * Render the five 1280x800 store screenshots from HTML via project-local Chromium.
+ * Render the store images from HTML via project-local Chromium: five 1280x800
+ * screenshots, plus the small and marquee promotional tiles.
  *
- * Two rules this set exists to enforce, both of which the hand-made originals broke:
+ * Three rules this set exists to enforce, all of which the hand-made originals broke:
  *   1. Never show an empty product. Shots 1, 3 and 5 previously showed two
  *      "Untitled / No content" notes — the developer's own test data.
  *   2. Never present a Pro feature as if it were free. Search and folders are
  *      Pro-gated after the trial, so every surface that shows them is badged.
+ *   3. Never name a browser. The old tiles read "for Chrome" and "inside Chrome",
+ *      which is wrong on the Edge listing where the same file gets uploaded.
  *
  * Usage: node scripts/gen-screenshots.mjs
  */
@@ -316,6 +319,79 @@ function renderHtml(shot) {
 </body></html>`;
 }
 
+/**
+ * Promotional tiles. Deliberately browser-neutral: the identical file is uploaded
+ * to both the Chrome and Edge listings, so any sentence naming one of them is
+ * false on the other.
+ */
+const PROMOS = [
+  {
+    file: 'quick_notes_promo_small_440x280.png',
+    width: 440,
+    height: 280,
+    headline: 'Fast private notes<br>in your browser',
+    sub: 'No account &middot; Offline &middot; Local',
+    scale: 'small'
+  },
+  {
+    file: 'quick_notes_promo_marquee_1400x560.png',
+    width: 1400,
+    height: 560,
+    headline: 'Fast, private, offline notes<br>in your browser',
+    sub: 'Open instantly. Autosave while typing.<br>No account. No cloud. No tracking.',
+    scale: 'wide'
+  }
+];
+
+function renderPromoHtml(promo) {
+  const wide = promo.scale === 'wide';
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: ${promo.width}px; height: ${promo.height}px; overflow: hidden;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(120% 100% at 100% 0%, rgba(124, 58, 237, 0.6) 0%, rgba(124, 58, 237, 0) 60%),
+      linear-gradient(135deg, #070c22 0%, #0d1642 50%, #1b1157 100%);
+    color: #fff;
+    display: flex; align-items: center;
+    padding: ${wide ? '0 72px' : '0 28px'};
+  }
+  .brand { display: flex; align-items: center; gap: ${wide ? '14px' : '9px'}; }
+  .bolt { font-size: ${wide ? '40px' : '24px'}; line-height: 1; }
+  .name { font-size: ${wide ? '38px' : '23px'}; font-weight: 700; letter-spacing: -0.4px; }
+  h1 {
+    margin-top: ${wide ? '22px' : '12px'};
+    font-size: ${wide ? '42px' : '20px'};
+    line-height: 1.2; font-weight: 700; letter-spacing: -0.6px;
+    color: #dfe6ff;
+  }
+  .sub {
+    margin-top: ${wide ? '18px' : '9px'};
+    font-size: ${wide ? '19px' : '12px'};
+    line-height: 1.5; color: #a9b5db;
+  }
+  .kbd {
+    display: inline-block; margin-top: ${wide ? '26px' : '13px'};
+    font-family: Consolas, monospace; font-size: ${wide ? '16px' : '11px'};
+    font-weight: 600; color: #e9edff;
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    padding: ${wide ? '9px 15px' : '5px 9px'}; border-radius: 8px;
+  }
+</style></head>
+<body>
+  <div>
+    <div class="brand"><span class="bolt">&#9889;</span><span class="name">Quick Notes</span></div>
+    <h1>${promo.headline}</h1>
+    <div class="sub">${promo.sub}</div>
+    <div class="kbd">Ctrl + Shift + Q</div>
+  </div>
+</body></html>`;
+}
+
 const { chromium } = await import(`file:///${REPO_ROOT.replace(/\\/g, '/')}/node_modules/playwright/index.mjs`);
 
 mkdirSync(OUT_DIR, { recursive: true });
@@ -333,5 +409,15 @@ for (const shot of SHOTS) {
   console.log(`  ok  ${path.relative(REPO_ROOT, file)}`);
 }
 
+for (const promo of PROMOS) {
+  await page.setViewportSize({ width: promo.width, height: promo.height });
+  await page.setContent(renderPromoHtml(promo), { waitUntil: 'load' });
+  const file = path.join(REPO_ROOT, promo.file);
+  await page.screenshot({ path: file });
+  console.log(`  ok  ${promo.file}`);
+}
+
 await browser.close();
-console.log(`\nRendered ${SHOTS.length} screenshots at ${WIDTH}x${HEIGHT}.\n`);
+console.log(
+  `\nRendered ${SHOTS.length} screenshots at ${WIDTH}x${HEIGHT} and ${PROMOS.length} promo tiles.\n`
+);
