@@ -79,26 +79,6 @@
     </div>
   </section>
 
-  <!-- Trial hint (below primary controls; hidden for Pro) -->
-  <div class="trial-banner" id="trialBanner" style="display: none;">
-    <span id="trialDays">7 days left in trial</span>
-    <button class="btn-trial-upgrade" id="trialUpgradeBtn">Upgrade</button>
-  </div>
-  <div class="trial-banner" id="backupSafetyBanner" style="display: none;">
-    <span>Safety tip: export a JSON backup before uninstalling.</span>
-    <div class="trial-banner-actions">
-      <button class="btn-trial-upgrade" id="backupSafetyActionBtn">Open backup tools</button>
-      <button class="btn-trial-upgrade" id="backupSafetyDismissBtn" type="button">Dismiss</button>
-    </div>
-  </div>
-  <div class="trial-banner" id="reviewBanner" style="display: none;">
-    <span>Finding Quick Notes useful? A short review helps other people find it.</span>
-    <div class="trial-banner-actions">
-      <button class="btn-trial-upgrade" id="reviewBannerActionBtn">Leave a review</button>
-      <button class="btn-trial-upgrade" id="reviewBannerDismissBtn" type="button">Not now</button>
-    </div>
-  </div>
-
   <!-- Main Content -->
   <main class="main">
     <!-- List View -->
@@ -207,11 +187,80 @@
   </div>
 
   <!-- Footer -->
-  <footer class="shortcuts-footer" id="shortcutsFooter">
-    <span><kbd>/</kbd> Search</span>
-    <span><kbd>Ctrl+N</kbd> New</span>
-    <span><kbd>Esc</kbd> Back</span>
-  </footer>
+  <div class="trial-banner" id="trialBanner" style="display: none;">
+    <span id="trialDays">7 days left in trial</span>
+    <button class="btn-trial-upgrade" id="trialUpgradeBtn">Upgrade</button>
+  </div>
+  <div class="trial-banner" id="backupSafetyBanner" style="display: none;">
+    <span>Safety tip: export a JSON backup before uninstalling.</span>
+    <div class="trial-banner-actions">
+      <button class="btn-trial-upgrade" id="backupSafetyActionBtn">Open backup tools</button>
+      <button class="btn-trial-upgrade" id="backupSafetyDismissBtn" type="button">Dismiss</button>
+    </div>
+  </div>
+  <div class="trial-banner" id="reviewBanner" style="display: none;">
+    <span>Finding Quick Notes useful? A short review helps other people find it.</span>
+    <div class="trial-banner-actions">
+      <button class="btn-trial-upgrade" id="reviewBannerActionBtn">Leave a review</button>
+      <button class="btn-trial-upgrade" id="reviewBannerDismissBtn" type="button">Not now</button>
+    </div>
+  </div>
+  <!-- Bottom tab bar. Replaces the shortcuts footer: the keys still work, they
+       are listed in Settings instead of taking permanent space here. -->
+  <nav class="tab-bar" id="tabBar" role="tablist" aria-label="Sections">
+    <button
+      type="button"
+      class="tab-item"
+      id="tab-notes"
+      data-tab="notes"
+      role="tab"
+      aria-selected="true"
+      aria-controls="listView"
+    >
+      <span class="tab-icon" aria-hidden="true">📝</span>
+      <span class="tab-label">Notes</span>
+      <span class="tab-badge" id="tabBadge-notes" hidden></span>
+    </button>
+    <button
+      type="button"
+      class="tab-item"
+      id="tab-inbox"
+      data-tab="inbox"
+      role="tab"
+      aria-selected="false"
+      aria-controls="listView"
+    >
+      <span class="tab-icon" aria-hidden="true">📥</span>
+      <span class="tab-label">Inbox</span>
+      <span class="tab-badge" id="tabBadge-inbox" hidden></span>
+    </button>
+    <button
+      type="button"
+      class="tab-item"
+      id="tab-page"
+      data-tab="page"
+      role="tab"
+      aria-selected="false"
+      aria-controls="listView"
+    >
+      <span class="tab-icon" aria-hidden="true">🔗</span>
+      <span class="tab-label">Page</span>
+      <span class="tab-badge" id="tabBadge-page" hidden></span>
+    </button>
+    <button
+      type="button"
+      class="tab-item"
+      id="tab-trash"
+      data-tab="trash"
+      role="tab"
+      aria-selected="false"
+      aria-controls="listView"
+    >
+      <span class="tab-icon" aria-hidden="true">🗑️</span>
+      <span class="tab-label">Trash</span>
+      <span class="tab-badge" id="tabBadge-trash" hidden></span>
+    </button>
+  </nav>
 
   <!-- Toast -->
   <div class="toast" id="copyToast">
@@ -336,6 +385,16 @@
               <input type="checkbox" id="includeContextToggle" checked>
               <span class="slider"></span>
             </label>
+          </div>
+        </div>
+        <div class="settings-section" id="rateSection" hidden>
+          <h3 class="settings-section-title">⭐ Rate Quick Notes</h3>
+          <div class="setting-item">
+            <div class="setting-info">
+              <label>Leave a review</label>
+              <p class="setting-desc">Ratings are how other people find the extension</p>
+            </div>
+            <button type="button" class="btn-secondary" id="rateExtensionBtn">Rate</button>
           </div>
         </div>
         <div class="settings-section">

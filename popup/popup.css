@@ -186,6 +186,8 @@ body {
 .btn-clear {
   position: absolute;
   right: calc(var(--spacing-lg) + 6px);
+  top: 50%;
+  transform: translateY(-50%);
   background: none;
   border: none;
   color: var(--text-muted);
@@ -2968,4 +2970,87 @@ select:focus-visible,
 a:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* ============================================
+   BOTTOM TAB BAR
+   Replaces the shortcuts footer. body is a flex column, so this sits at the
+   bottom as the last child — no fixed positioning, no scroll offset to manage.
+   ============================================ */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.tab-item {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--spacing-sm) var(--spacing-xs);
+  background: transparent;
+  border: none;
+  border-top: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.tab-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.tab-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Selected state keyed off aria-selected: the attribute is the source of truth,
+   so the styling cannot drift from what screen readers announce. */
+.tab-item[aria-selected="true"] {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-top-color: var(--accent);
+}
+
+.tab-item[aria-selected="true"] .tab-icon {
+  filter: none;
+}
+
+.tab-icon {
+  font-size: 15px;
+  line-height: 1;
+  filter: grayscale(0.4) opacity(0.8);
+}
+
+.tab-label {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tab-badge {
+  position: absolute;
+  transform: translate(16px, -14px);
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.tab-item {
+  position: relative;
 }

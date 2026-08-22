@@ -451,7 +451,99 @@ function showView(view) {
     }
   }
   if (folderFilter) folderFilter.style.display = isListView ? 'flex' : 'none';
-  if (elements.shortcutsFooter) elements.shortcutsFooter.style.display = isListView ? 'flex' : 'none';
+  if (elements.tabBar) elements.tabBar.style.display = view === 'editor' ? 'none' : 'flex';
+  syncTabBar(view);
+}
+
+// ============================================
+// 📑 BOTTOM TAB BAR
+// The tabs present state that already existed: three of them are listViewFilter
+// values, and Trash is its own view. Nothing new is stored.
+// ============================================
+const TAB_FILTERS = { notes: 'default', inbox: 'needs-review', page: 'page' };
+
+/** Reflect the current view/filter on the tabs. aria-selected drives the styling. */
+function syncTabBar(view) {
+  if (!elements.tabBar) return;
+  let active = null;
+  if (view === 'trash') {
+    active = 'trash';
+  } else if (view !== 'editor') {
+    active = Object.keys(TAB_FILTERS).find((t) => TAB_FILTERS[t] === listViewFilter) || 'notes';
+  }
+  elements.tabBar.querySelectorAll('.tab-item').forEach((btn) => {
+    btn.setAttribute('aria-selected', String(btn.dataset.tab === active));
+  });
+}
+
+async function setActiveTab(tab) {
+  if (tab === 'trash') {
+    await openTrash();
+    return;
+  }
+  showView('list');
+  if (tab === 'inbox') {
+    // Goes through applyPrimaryListFilter so the folder selection is cleared:
+    // Inbox and a folder are mutually exclusive, and picking one must drop the
+    // other or the list silently shows their intersection.
+    applyPrimaryListFilter('needs-review');
+  } else if (tab === 'page') {
+    setListViewFilter('page');
+  } else {
+    applyPrimaryListFilter('all');
+  }
+}
+
+/** Counts come from the same sources the rest of the UI already uses. */
+function updateTabBadges() {
+  if (!elements.tabBar) return;
+  const setBadge = (id, count) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : String(count);
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  };
+  setBadge('tabBadge-inbox', countNeedsReview(allNotesCache));
+  setBadge('tabBadge-trash', trashCountCache);
+  setBadge('tabBadge-page', currentTabContext ? getPageMemoryCounts().page : 0);
+}
+
+/**
+ * Permanent route to the store listing, in Settings.
+ *
+ * The banner is deliberately rare and stops asking for good, which leaves anyone
+ * who later decides to rate with nowhere to go. This is that place: it never
+ * interrupts, it is only found by someone looking for it.
+ */
+function setupRateSetting() {
+  const section = document.getElementById('rateSection');
+  const btn = document.getElementById('rateExtensionBtn');
+  if (!section || !btn) return;
+
+  const url = getStoreReviewUrl(chrome.runtime?.id, navigator.userAgent);
+  // Unpacked builds and unknown browsers have no listing to point at.
+  if (!url) return;
+  section.hidden = false;
+
+  btn.addEventListener('click', async () => {
+    // Someone who rates from here should never be asked by the banner either.
+    await writeReviewPromptState({ done: true });
+    await trackFunnelEvent('review_prompt_clicked', { source: 'settings' });
+    await updateReviewBanner();
+    chrome.tabs.create({ url });
+  });
+}
+
+function setupTabBar() {
+  if (!elements.tabBar) return;
+  elements.tabBar.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab-item');
+    if (btn?.dataset.tab) setActiveTab(btn.dataset.tab);
+  });
 }
 
 // Two-step confirm to replace browser confirm() (blocked in extensions)
@@ -503,7 +595,7 @@ function initDomElements() {
     includeContextToggle: document.getElementById('includeContextToggle'),
     quickAddToggle: document.getElementById('quickAddToggle'),
     analyticsToggle: document.getElementById('analyticsToggle'),
-    shortcutsFooter: document.getElementById('shortcutsFooter'),
+    tabBar: document.getElementById('tabBar'),
     // Context
     contextInfo: document.getElementById('contextInfo'),
     contextFavicon: document.getElementById('contextFavicon'),
@@ -665,6 +757,8 @@ async function initializeApp() {
   await maybeOfferLocalBackupRestore();
   await trackFunnelEventOnce('first_open', 'first_open', { source: isFirstRun ? 'welcome' : 'popup' });
   setupEventListeners();
+  setupTabBar();
+  setupRateSetting();
   setupBackupListeners();
   await updateBackupUI();
   await updateBackupSafetyBanner();
@@ -817,6 +911,9 @@ function renderFromPrimaryFilters() {
   }
   updatePageMemoryUI();
   updateReviewFilterUI();
+  // Every filter change funnels through here, whoever triggered it — a tab, a
+  // folder pill, or the overflow menu — so the tab bar cannot fall out of sync.
+  syncTabBar('list');
 }
 
 /**
@@ -1961,12 +2058,20 @@ async function updateBackupSafetyBanner() {
 
 /** Stamp first use once, so the prompt can tell how long someone has stayed. */
 async function ensureFirstUseTimestamp() {
-  const stored = await chrome.storage.local.get([FIRST_USE_KEY]);
+  const stored = await chrome.storage.local.get([FIRST_USE_KEY, 'trialStartDate']);
   const existing = Number(stored[FIRST_USE_KEY] || 0);
   if (existing > 0) return existing;
-  const now = Date.now();
-  await chrome.storage.local.set({ [FIRST_USE_KEY]: now });
-  return now;
+
+  // firstUseAt only appeared in 1.7.2. Stamping "now" on first run of that build
+  // would treat a six-month user as a fresh install and make them wait another
+  // fortnight to be asked. trialStartDate has been written since the trial
+  // existed, so it is the closest thing to a real install date for anyone
+  // upgrading. New installs have neither, and fall back to now.
+  const legacyFirstUse = Number(stored.trialStartDate || 0);
+  const firstUse = legacyFirstUse > 0 ? legacyFirstUse : Date.now();
+
+  await chrome.storage.local.set({ [FIRST_USE_KEY]: firstUse });
+  return firstUse;
 }
 
 async function readReviewPromptState() {
@@ -2814,6 +2919,10 @@ function handleCardPayment() {
 // 📁 FOLDERS MANAGEMENT
 // ============================================
 
+function refreshTabBadges() {
+  updateTabBadges();
+}
+
 async function loadFolders() {
   folders = await db.getFolders();
   updateFolderUI();
@@ -2826,6 +2935,7 @@ const LIST_FILTER_LABELS = {
 };
 
 function updateFolderUI() {
+  refreshTabBadges();
   if (!elements.folderPills) return;
 
   const browsable = allNotesCache.filter(isBrowsableNote);
@@ -2844,16 +2954,6 @@ function updateFolderUI() {
     count: allCount,
     active: allActive
   });
-
-  if (needsCount > 0) {
-    pills.push({
-      kind: 'list',
-      listFilter: 'needs-review',
-      label: 'Inbox',
-      count: needsCount,
-      active: listViewFilter === 'needs-review'
-    });
-  }
 
   if (canUseFolders()) {
     for (const id of ['personal', 'work']) {

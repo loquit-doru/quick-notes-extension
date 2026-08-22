@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Quick Notes: Offline Notepad & Note Taking, No Account",
   "short_name": "Quick Notes",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "description": "Fast notepad for any tab. No account, no cloud, no tracking. Free core plan plus an optional one-time Pro unlock.",
   "author": "Quick Notes Team",
   "icons": {
