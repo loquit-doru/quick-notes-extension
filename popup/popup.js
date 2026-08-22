@@ -451,7 +451,73 @@ function showView(view) {
     }
   }
   if (folderFilter) folderFilter.style.display = isListView ? 'flex' : 'none';
-  if (elements.shortcutsFooter) elements.shortcutsFooter.style.display = isListView ? 'flex' : 'none';
+  if (elements.tabBar) elements.tabBar.style.display = view === 'editor' ? 'none' : 'flex';
+  syncTabBar(view);
+}
+
+// ============================================
+// 📑 BOTTOM TAB BAR
+// The tabs present state that already existed: three of them are listViewFilter
+// values, and Trash is its own view. Nothing new is stored.
+// ============================================
+const TAB_FILTERS = { notes: 'default', inbox: 'needs-review', page: 'page' };
+
+/** Reflect the current view/filter on the tabs. aria-selected drives the styling. */
+function syncTabBar(view) {
+  if (!elements.tabBar) return;
+  let active = null;
+  if (view === 'trash') {
+    active = 'trash';
+  } else if (view !== 'editor') {
+    active = Object.keys(TAB_FILTERS).find((t) => TAB_FILTERS[t] === listViewFilter) || 'notes';
+  }
+  elements.tabBar.querySelectorAll('.tab-item').forEach((btn) => {
+    btn.setAttribute('aria-selected', String(btn.dataset.tab === active));
+  });
+}
+
+async function setActiveTab(tab) {
+  if (tab === 'trash') {
+    await openTrash();
+    return;
+  }
+  showView('list');
+  if (tab === 'inbox') {
+    // Goes through applyPrimaryListFilter so the folder selection is cleared:
+    // Inbox and a folder are mutually exclusive, and picking one must drop the
+    // other or the list silently shows their intersection.
+    applyPrimaryListFilter('needs-review');
+  } else if (tab === 'page') {
+    setListViewFilter('page');
+  } else {
+    applyPrimaryListFilter('all');
+  }
+}
+
+/** Counts come from the same sources the rest of the UI already uses. */
+function updateTabBadges() {
+  if (!elements.tabBar) return;
+  const setBadge = (id, count) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : String(count);
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  };
+  setBadge('tabBadge-inbox', countNeedsReview(allNotesCache));
+  setBadge('tabBadge-trash', trashCountCache);
+  setBadge('tabBadge-page', currentTabContext ? getPageMemoryCounts().page : 0);
+}
+
+function setupTabBar() {
+  if (!elements.tabBar) return;
+  elements.tabBar.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab-item');
+    if (btn?.dataset.tab) setActiveTab(btn.dataset.tab);
+  });
 }
 
 // Two-step confirm to replace browser confirm() (blocked in extensions)
@@ -503,7 +569,7 @@ function initDomElements() {
     includeContextToggle: document.getElementById('includeContextToggle'),
     quickAddToggle: document.getElementById('quickAddToggle'),
     analyticsToggle: document.getElementById('analyticsToggle'),
-    shortcutsFooter: document.getElementById('shortcutsFooter'),
+    tabBar: document.getElementById('tabBar'),
     // Context
     contextInfo: document.getElementById('contextInfo'),
     contextFavicon: document.getElementById('contextFavicon'),
@@ -665,6 +731,7 @@ async function initializeApp() {
   await maybeOfferLocalBackupRestore();
   await trackFunnelEventOnce('first_open', 'first_open', { source: isFirstRun ? 'welcome' : 'popup' });
   setupEventListeners();
+  setupTabBar();
   setupBackupListeners();
   await updateBackupUI();
   await updateBackupSafetyBanner();
@@ -817,6 +884,9 @@ function renderFromPrimaryFilters() {
   }
   updatePageMemoryUI();
   updateReviewFilterUI();
+  // Every filter change funnels through here, whoever triggered it — a tab, a
+  // folder pill, or the overflow menu — so the tab bar cannot fall out of sync.
+  syncTabBar('list');
 }
 
 /**
@@ -2814,6 +2884,10 @@ function handleCardPayment() {
 // 📁 FOLDERS MANAGEMENT
 // ============================================
 
+function refreshTabBadges() {
+  updateTabBadges();
+}
+
 async function loadFolders() {
   folders = await db.getFolders();
   updateFolderUI();
@@ -2826,6 +2900,7 @@ const LIST_FILTER_LABELS = {
 };
 
 function updateFolderUI() {
+  refreshTabBadges();
   if (!elements.folderPills) return;
 
   const browsable = allNotesCache.filter(isBrowsableNote);
@@ -2844,16 +2919,6 @@ function updateFolderUI() {
     count: allCount,
     active: allActive
   });
-
-  if (needsCount > 0) {
-    pills.push({
-      kind: 'list',
-      listFilter: 'needs-review',
-      label: 'Inbox',
-      count: needsCount,
-      active: listViewFilter === 'needs-review'
-    });
-  }
 
   if (canUseFolders()) {
     for (const id of ['personal', 'work']) {

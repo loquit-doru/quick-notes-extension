@@ -17,6 +17,7 @@ node_modules/playwright-core/.local-browsers/
 tests/.pw-extension-profile/
 tests/.pw-extension-e2e-profile/
 tests/.pw-diag-profile/
+tests/.pw-shot-profile/
 
 # Wrangler local state and build cache
 workers/.wrangler/

@@ -89,18 +89,19 @@ test.describe('E. Inbox workflow', () => {
     await createNoteViaUi(popupPage, { title: 'Inbox B' });
     await createNoteViaUi(popupPage, { title: 'Inbox C' });
 
-    const inboxPill = popupPage.locator('[data-list-filter="needs-review"]');
-    await expect(inboxPill).toContainText('Inbox');
-    await expect(inboxPill.locator('.pill-count')).toHaveText('3');
+    // Inbox moved from a filter pill into the bottom tab bar.
+    const inboxTab = popupPage.locator('#tab-inbox');
+    await expect(inboxTab).toContainText('Inbox');
+    await expect(popupPage.locator('#tabBadge-inbox')).toHaveText('3');
 
-    await inboxPill.click();
+    await inboxTab.click();
     await expect(popupPage.locator('.note-card')).toHaveCount(3);
 
     const cardA = popupPage.locator('.note-card').filter({ hasText: 'Inbox A' }).first();
     await cardA.locator('.btn-note-done').click();
     await popupPage.waitForTimeout(400);
 
-    await expect(inboxPill.locator('.pill-count')).toHaveText('2');
+    await expect(popupPage.locator('#tabBadge-inbox')).toHaveText('2');
     await expect(popupPage.locator('.note-card')).toHaveCount(2);
     await expect(popupPage.locator('.note-card', { hasText: 'Inbox A' })).toHaveCount(0);
 
@@ -271,7 +272,7 @@ test.describe('J. Primary filter exclusivity', () => {
     await popupPage.reload({ waitUntil: 'domcontentloaded' });
     await popupPage.locator('.folder-pill[data-folder-id="all"]').waitFor({ state: 'visible', timeout: 30_000 });
 
-    const reviewPill = popupPage.locator('[data-list-filter="needs-review"]');
+    const inboxTab = popupPage.locator('#tab-inbox');
     const personalPill = popupPage.locator('.folder-pill[data-folder-id="personal"]');
     const workPill = popupPage.locator('.folder-pill[data-folder-id="work"]');
     const allPill = popupPage.locator('.folder-pill[data-folder-id="all"]');
@@ -280,35 +281,35 @@ test.describe('J. Primary filter exclusivity', () => {
     await expect(popupPage.locator('.note-card')).toHaveCount(1);
     await expect(popupPage.locator('.note-card', { hasText: 'Review Personal' })).toBeVisible();
 
-    await reviewPill.click();
-    await expect(reviewPill).toHaveClass(/active/);
-    await expect(reviewPill.locator('.pill-count')).toHaveText('3');
+    await inboxTab.click();
+    await expect(inboxTab).toHaveAttribute('aria-selected', 'true');
+    await expect(popupPage.locator('#tabBadge-inbox')).toHaveText('3');
     await expect(popupPage.locator('.note-card')).toHaveCount(3);
 
     await workPill.click();
     await expect(workPill).toHaveClass(/active/);
-    await expect(reviewPill).not.toHaveClass(/active/);
+    await expect(inboxTab).toHaveAttribute('aria-selected', 'false');
     await expect(popupPage.locator('.note-card')).toHaveCount(1);
     await expect(popupPage.locator('.note-card', { hasText: 'Review Work' })).toBeVisible();
 
-    await reviewPill.click();
-    await expect(reviewPill).toHaveClass(/active/);
+    await inboxTab.click();
+    await expect(inboxTab).toHaveAttribute('aria-selected', 'true');
     await expect(popupPage.locator('.note-card')).toHaveCount(3);
 
     await personalPill.click();
     await expect(personalPill).toHaveClass(/active/);
-    await expect(reviewPill).not.toHaveClass(/active/);
+    await expect(inboxTab).toHaveAttribute('aria-selected', 'false');
     await expect(popupPage.locator('.note-card')).toHaveCount(1);
 
-    await reviewPill.click();
+    await inboxTab.click();
     await expect(popupPage.locator('.note-card')).toHaveCount(3);
 
     await allPill.click();
     await expect(allPill).toHaveClass(/active/);
-    await expect(reviewPill).not.toHaveClass(/active/);
+    await expect(inboxTab).toHaveAttribute('aria-selected', 'false');
     await expect(popupPage.locator('.note-card')).toHaveCount(3);
 
-    await reviewPill.click();
+    await inboxTab.click();
     await popupPage.locator('#searchInput').fill('Work');
     await popupPage.waitForTimeout(300);
     await expect(popupPage.locator('.note-card')).toHaveCount(1);
