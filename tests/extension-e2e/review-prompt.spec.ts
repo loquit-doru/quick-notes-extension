@@ -105,3 +105,67 @@ test.describe('O. Review prompt — never nags', () => {
     await expect(popupPage.locator('#reviewBanner')).toBeHidden();
   });
 });
+
+test.describe('T. Rating from Settings — always there, never in the way', () => {
+  test('Settings offers a permanent way to rate', async ({ popupPage }) => {
+    await popupPage.locator('#settingsBtn').click();
+    await expect(popupPage.locator('#settingsModal')).toBeVisible();
+    await expect(popupPage.locator('#rateSection')).toBeVisible();
+    await expect(popupPage.getByRole('button', { name: /^Rate$/ })).toBeVisible();
+  });
+
+  test('rating from Settings stops the banner from ever asking', async ({ popupPage }) => {
+    // Put the prompt in a state where it would otherwise appear.
+    await primeReviewPrompt(popupPage);
+    await expect(popupPage.locator('#reviewBanner')).toBeVisible();
+
+    // Keep the store tab from actually opening during the test.
+    await popupPage.evaluate(() => {
+      chrome.tabs.create = () => Promise.resolve({});
+    });
+
+    await popupPage.locator('#settingsBtn').click();
+    await popupPage.locator('#rateExtensionBtn').click();
+    await popupPage.locator('#closeSettingsBtn').click();
+
+    await expect(popupPage.locator('#reviewBanner')).toBeHidden();
+
+    await popupPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await waitForPopupReady(popupPage);
+    await expect(popupPage.locator('#reviewBanner')).toBeHidden();
+
+    const state = await popupPage.evaluate(async () => {
+      const { reviewPromptState } = await chrome.storage.local.get(['reviewPromptState']);
+      return reviewPromptState as { done: boolean };
+    });
+    expect(state.done).toBe(true);
+  });
+});
+
+test.describe('U. Upgrading users are not sent to the back of the queue', () => {
+  test('an existing user carries their real start date, not the upgrade date', async ({
+    popupPage
+  }) => {
+    // A long-standing install: trialStartDate from months ago, and no firstUseAt
+    // because that key did not exist before 1.7.2.
+    await popupPage.evaluate(async () => {
+      await chrome.storage.local.remove('firstUseAt');
+    });
+    await seedNotes(popupPage, makeNotes(6));
+    await seedChromeStorage(popupPage, { trialStartDate: Date.now() - 200 * DAY_MS });
+    await popupPage.evaluate(async () => {
+      await chrome.storage.local.get(['trialStartDate']);
+    });
+    await popupPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await waitForPopupReady(popupPage);
+
+    // Without the carry-over they would wait another fortnight to be asked.
+    await expect(popupPage.locator('#reviewBanner')).toBeVisible();
+
+    const firstUseAt = await popupPage.evaluate(async () => {
+      const { firstUseAt } = await chrome.storage.local.get(['firstUseAt']);
+      return firstUseAt as number;
+    });
+    expect(Date.now() - firstUseAt).toBeGreaterThan(100 * 24 * 60 * 60 * 1000);
+  });
+});

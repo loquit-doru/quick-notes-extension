@@ -512,6 +512,32 @@ function updateTabBadges() {
   setBadge('tabBadge-page', currentTabContext ? getPageMemoryCounts().page : 0);
 }
 
+/**
+ * Permanent route to the store listing, in Settings.
+ *
+ * The banner is deliberately rare and stops asking for good, which leaves anyone
+ * who later decides to rate with nowhere to go. This is that place: it never
+ * interrupts, it is only found by someone looking for it.
+ */
+function setupRateSetting() {
+  const section = document.getElementById('rateSection');
+  const btn = document.getElementById('rateExtensionBtn');
+  if (!section || !btn) return;
+
+  const url = getStoreReviewUrl(chrome.runtime?.id, navigator.userAgent);
+  // Unpacked builds and unknown browsers have no listing to point at.
+  if (!url) return;
+  section.hidden = false;
+
+  btn.addEventListener('click', async () => {
+    // Someone who rates from here should never be asked by the banner either.
+    await writeReviewPromptState({ done: true });
+    await trackFunnelEvent('review_prompt_clicked', { source: 'settings' });
+    await updateReviewBanner();
+    chrome.tabs.create({ url });
+  });
+}
+
 function setupTabBar() {
   if (!elements.tabBar) return;
   elements.tabBar.addEventListener('click', (e) => {
@@ -732,6 +758,7 @@ async function initializeApp() {
   await trackFunnelEventOnce('first_open', 'first_open', { source: isFirstRun ? 'welcome' : 'popup' });
   setupEventListeners();
   setupTabBar();
+  setupRateSetting();
   setupBackupListeners();
   await updateBackupUI();
   await updateBackupSafetyBanner();
@@ -2031,12 +2058,20 @@ async function updateBackupSafetyBanner() {
 
 /** Stamp first use once, so the prompt can tell how long someone has stayed. */
 async function ensureFirstUseTimestamp() {
-  const stored = await chrome.storage.local.get([FIRST_USE_KEY]);
+  const stored = await chrome.storage.local.get([FIRST_USE_KEY, 'trialStartDate']);
   const existing = Number(stored[FIRST_USE_KEY] || 0);
   if (existing > 0) return existing;
-  const now = Date.now();
-  await chrome.storage.local.set({ [FIRST_USE_KEY]: now });
-  return now;
+
+  // firstUseAt only appeared in 1.7.2. Stamping "now" on first run of that build
+  // would treat a six-month user as a fresh install and make them wait another
+  // fortnight to be asked. trialStartDate has been written since the trial
+  // existed, so it is the closest thing to a real install date for anyone
+  // upgrading. New installs have neither, and fall back to now.
+  const legacyFirstUse = Number(stored.trialStartDate || 0);
+  const firstUse = legacyFirstUse > 0 ? legacyFirstUse : Date.now();
+
+  await chrome.storage.local.set({ [FIRST_USE_KEY]: firstUse });
+  return firstUse;
 }
 
 async function readReviewPromptState() {
