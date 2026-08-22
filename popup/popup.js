@@ -509,7 +509,6 @@ function updateTabBadges() {
   };
   setBadge('tabBadge-inbox', countNeedsReview(allNotesCache));
   setBadge('tabBadge-trash', trashCountCache);
-  setBadge('tabBadge-page', currentTabContext ? getPageMemoryCounts().page : 0);
 }
 
 /**

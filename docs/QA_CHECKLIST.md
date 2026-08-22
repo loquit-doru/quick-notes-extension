@@ -120,7 +120,7 @@ parts that only appear in a real popup.
 |------|----------|
 | Tab bar sits at the bottom of the popup | Not floating mid-window; the popup sizes to its content |
 | Notes / Inbox / Page / Trash all switch the list | Selected tab is highlighted, others are not |
-| Badges show real counts | Inbox = unreviewed notes, Trash = deleted notes, Page = notes for the current site |
+| Badges show real counts | Inbox = unreviewed notes, Trash = deleted notes. Page carries no badge: its count is context, not a task, and it would change on every navigation |
 | **Page tab with a live tab open** | Opened from the toolbar on a site you have notes for, the Page tab lists them. This is the one the suite cannot reach — a directly opened popup has no activeTab context |
 | Opening a note hides the tab bar | Editor owns the popup; Back restores the bar and the Notes tab |
 | Keyboard shortcuts still work | The footer that listed them is gone: `/`, `Ctrl+N` and `Esc` must still function, and are documented in Settings |
