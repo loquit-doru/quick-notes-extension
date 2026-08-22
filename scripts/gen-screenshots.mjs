@@ -15,7 +15,8 @@
  */
 
 import path from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { applyPlaywrightBrowserPath, PLAYWRIGHT_LOCAL_BROWSERS } from './lib/playwright-env.js';
 import { REPO_ROOT } from './lib/qa-shared.js';
 
@@ -26,44 +27,18 @@ const WIDTH = 1280;
 const HEIGHT = 800;
 const OUT_DIR = path.join(REPO_ROOT, 'screenshots');
 
-/** Demo notes — realistic, never blank. Reused so the set feels like one account. */
-const NOTES = {
-  roadmap: {
-    title: 'Project roadmap ideas',
-    body: 'Landing page redesign, user onboarding flow, and pricing page updates.',
-    tag: 'Work',
-    date: 'Feb 7'
-  },
-  standup: {
-    title: 'Daily stand-up notes',
-    body: 'Discussed Q1 goals, sprint progress, and blockers. Action items assigned.',
-    tag: 'Work',
-    date: 'Feb 6'
-  },
-  books: {
-    title: 'Book recommendations',
-    body: 'Atomic Habits, Deep Work, The Almanack of Naval Ravikant.',
-    tag: 'Personal',
-    date: 'Jan 30'
-  },
-  recipe: {
-    title: 'Weeknight pasta recipe',
-    body: 'Garlic, chilli, good olive oil. Salt the water properly. 9 minutes.',
-    tag: 'Personal',
-    date: 'Jan 28'
-  },
-  quote: {
-    title: 'Quote from the article',
-    body: 'Saved straight from the tab I was reading, with the source link attached.',
-    tag: 'Personal',
-    date: 'Jan 24',
-    source: 'nytimes.com'
-  }
-};
-
+/**
+ * Store screenshots are a composition: a real capture of the running popup,
+ * placed on a designed background with the headline copy.
+ *
+ * Earlier versions redrew the interface in HTML, which is how three of them came
+ * to show "Untitled / No content" long after the product had moved on. A picture
+ * of the actual extension cannot drift from it.
+ */
 const SHOTS = [
   {
     index: 1,
+    state: 'notes',
     headTop: 'Capture ideas',
     headBottom: 'instantly',
     sub: 'Open Quick Notes from any tab, write, and get back to what you were doing.',
@@ -71,53 +46,49 @@ const SHOTS = [
       { icon: '⚡', label: 'Fast' },
       { icon: '✨', label: 'No account' },
       { icon: '⌨️', label: 'Keyboard-friendly' }
-    ],
-    notes: [NOTES.roadmap, NOTES.quote]
+    ]
   },
   {
     index: 2,
+    state: 'search',
     headTop: 'Find any note',
     headBottom: 'in seconds',
     sub: 'Full-text search across everything you have written.',
     proNote: 'Pro feature — $2.99 one-time',
     chips: [
       { icon: '🔍', label: 'Search' },
-      { icon: '🗂️', label: 'Folders' },
-      { icon: '⚡', label: 'Instant results' }
-    ],
-    notes: [NOTES.roadmap, NOTES.standup, NOTES.books],
-    focus: 'search'
+      { icon: '⚡', label: 'Instant results' },
+      { icon: '🗂️', label: 'Folders' }
+    ]
   },
   {
     index: 3,
-    headTop: 'One click,',
-    headBottom: 'one note',
-    sub: 'Hit the New Note button or press Ctrl+N and start writing immediately.',
+    state: 'inbox',
+    headTop: 'Everything',
+    headBottom: 'one tap away',
+    sub: 'Notes, Inbox, this page and Trash each get their own tab.',
     chips: [
-      { icon: '➕', label: 'New note' },
-      { icon: '⌨️', label: 'Ctrl+N' },
-      { icon: '💾', label: 'Auto-saved' }
-    ],
-    notes: [NOTES.standup, NOTES.recipe],
-    focus: 'new'
+      { icon: '📥', label: 'Inbox' },
+      { icon: '🔗', label: 'This page' },
+      { icon: '🗑️', label: 'Trash' }
+    ]
   },
   {
     index: 4,
+    state: 'work',
     headTop: 'Keep work and',
     headBottom: 'personal apart',
     sub: 'Switch between All Notes, Personal and Work in a single click.',
     proNote: 'Pro feature — $2.99 one-time',
-    // No "Tags" chip: the app has folders and an Inbox workflow, not tagging.
     chips: [
       { icon: '🗂️', label: 'Folders' },
       { icon: '📥', label: 'Inbox' },
       { icon: '📌', label: 'Pin to top' }
-    ],
-    notes: [NOTES.roadmap, NOTES.books],
-    focus: 'folders'
+    ]
   },
   {
     index: 5,
+    state: 'notes',
     headTop: 'Your notes stay',
     headBottom: 'on your machine',
     sub: 'No account, no cloud sync, no tracking. Everything works offline.',
@@ -125,205 +96,165 @@ const SHOTS = [
       { icon: '🔒', label: 'Local-first' },
       { icon: '📴', label: 'Works offline' },
       { icon: '🚫', label: 'No tracking' }
-    ],
-    notes: [NOTES.books, NOTES.recipe]
+    ]
   }
 ];
 
-const PRO_BADGE = '<span class="pro-badge">Pro</span>';
+function renderHtml(shot, popupDataUri) {
+  const proLine = shot.proNote ? '<div class="pro-note">' + shot.proNote + '</div>' : '';
+  const chips = shot.chips
+    .map((c) => '<div class="chip"><span>' + c.icon + '</span>' + c.label + '</div>')
+    .join('');
 
-function noteCard(note) {
-  const source = note.source
-    ? `<div class="note-source"><span class="globe">🌐</span>${note.source}</div>`
-    : '';
-  const tagClass = note.tag === 'Work' ? 'tag-work' : 'tag-personal';
-  const tagIcon = note.tag === 'Work' ? '💼' : '👤';
-  return `
-    <div class="note-card">
-      <div class="note-title">${note.title}</div>
-      <div class="note-body">${note.body}</div>
-      ${source}
-      <div class="note-foot">
-        <span class="note-date">${note.date}</span>
-        <span class="note-tag ${tagClass}">${tagIcon} ${note.tag}</span>
-      </div>
-    </div>`;
+  return [
+    '<!doctype html><html><head><meta charset="utf-8"><style>',
+    '* { margin: 0; padding: 0; box-sizing: border-box; }',
+    'body { width: ' + WIDTH + 'px; height: ' + HEIGHT + 'px; overflow: hidden;',
+    '  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;',
+    '  background: #060a1c; -webkit-font-smoothing: antialiased; }',
+    '.stage { position: relative; width: 100%; height: 100%;',
+    '  display: grid; grid-template-columns: 1fr 480px;',
+    '  align-items: center; gap: 40px; padding: 0 48px;',
+    '  background: radial-gradient(120% 90% at 100% 0%, rgba(124,58,237,0.55) 0%, rgba(124,58,237,0) 55%),',
+    '    radial-gradient(90% 80% at 0% 100%, rgba(29,78,216,0.35) 0%, rgba(29,78,216,0) 60%),',
+    '    linear-gradient(135deg, #070c22 0%, #0b1338 45%, #1a1153 100%); }',
+    '.copy { height: 100%; display: grid; grid-template-rows: auto 1fr auto; padding: 62px 0 104px; }',
+    '.copy-mid { align-self: center; }',
+    '.brand { display: flex; align-items: center; gap: 14px; }',
+    '.brand .bolt { font-size: 34px; line-height: 1; }',
+    '.brand .name { font-size: 31px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }',
+    'h1 { font-size: 58px; line-height: 1.05; font-weight: 800; letter-spacing: -2px; color: #fff; }',
+    'h1 .accent { background: linear-gradient(90deg, #a78bfa 0%, #60a5fa 100%);',
+    '  -webkit-background-clip: text; -webkit-text-fill-color: transparent; }',
+    '.sub { margin-top: 24px; font-size: 21px; line-height: 1.5; color: #b6c0e0; max-width: 470px; }',
+    '.pro-note { margin-top: 14px; display: inline-block; font-size: 15px; font-weight: 600;',
+    '  color: #fbbf24; border: 1px solid rgba(251,191,36,0.35); background: rgba(251,191,36,0.1);',
+    '  padding: 6px 12px; border-radius: 8px; }',
+    '.chips { display: flex; gap: 14px; flex-wrap: wrap; align-self: end; }',
+    '.chip { display: flex; align-items: center; gap: 9px; padding: 14px 20px; border-radius: 13px;',
+    '  font-size: 16px; font-weight: 600; color: #eef2ff;',
+    '  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.11); }',
+    '/* The popup at its true proportions, captured from the running extension. */',
+    '.device { justify-self: center; border-radius: 18px; overflow: hidden;',
+    '  border: 1px solid rgba(255,255,255,0.09); box-shadow: 0 40px 90px rgba(0,0,0,0.55); }',
+    '.device img { display: block; width: 418px; height: auto; }',
+    '</style></head><body>',
+    '<div class="stage">',
+    '  <div class="copy">',
+    '    <div class="brand"><span class="bolt">⚡</span><span class="name">Quick Notes</span></div>',
+    '    <div class="copy-mid">',
+    '      <h1>' + shot.headTop + '<br><span class="accent">' + shot.headBottom + '</span></h1>',
+    '      <div class="sub">' + shot.sub + '</div>',
+    '      ' + proLine,
+    '    </div>',
+    '    <div class="chips">' + chips + '</div>',
+    '  </div>',
+    '  <div class="device"><img src="' + popupDataUri + '" alt=""></div>',
+    '</div></body></html>'
+  ].join('\n');
 }
 
-function renderHtml(shot) {
-  const focusSearch = shot.focus === 'search' ? ' is-focus' : '';
-  const focusFolders = shot.focus === 'folders' ? ' is-focus' : '';
-  const focusNew = shot.focus === 'new' ? ' is-focus' : '';
-  const proLine = shot.proNote ? `<div class="pro-note">${shot.proNote}</div>` : '';
+/** Demo notes seeded into the running extension — realistic, never blank. */
+const DEMO_NOTES = [
+  ['Project roadmap ideas', 'Landing page redesign, user onboarding flow, and pricing page updates.', 'work', 'reviewed', true],
+  ['Quote from the article', 'Saved straight from the tab I was reading, with the source link attached.', 'personal', 'new', false],
+  ['Daily stand-up notes', 'Discussed Q1 goals, sprint progress, and blockers. Action items assigned.', 'work', 'new', false],
+  ['Book recommendations', 'Atomic Habits, Deep Work, The Almanack. Notes from each are in Personal.', 'personal', 'new', false],
+  ['Weeknight pasta recipe', 'Garlic, chilli, good olive oil. Salt the water properly. 9 minutes.', 'personal', 'reviewed', false]
+];
 
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden;
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-    background: #060a1c;
-    -webkit-font-smoothing: antialiased;
-  }
-  .stage {
-    position: relative; width: 100%; height: 100%;
-    display: grid; grid-template-columns: 1fr 620px;
-    align-items: center; gap: 40px; padding: 0 48px;
-    background:
-      radial-gradient(120% 90% at 100% 0%, rgba(124, 58, 237, 0.55) 0%, rgba(124, 58, 237, 0) 55%),
-      radial-gradient(90% 80% at 0% 100%, rgba(29, 78, 216, 0.35) 0%, rgba(29, 78, 216, 0) 60%),
-      linear-gradient(135deg, #070c22 0%, #0b1338 45%, #1a1153 100%);
-  }
+/** Drive the real popup into each state and return a PNG data URI per state. */
+async function capturePopupStates(browser) {
+  const sw =
+    browser.serviceWorkers()[0] ||
+    (await browser.waitForEvent('serviceworker', { timeout: 30000 }));
+  const extId = sw.url().split('/')[2];
 
-  /* ---------- left column ----------
-     Three rows so the copy fills the frame the way the hand-made set did:
-     brand pinned top, headline block centred, chips resting at the bottom. */
-  .copy { height: 100%; display: grid; grid-template-rows: auto 1fr auto; padding: 62px 0 104px; }
-  .copy-mid { align-self: center; }
-  .brand { display: flex; align-items: center; gap: 14px; }
-  .brand .bolt { font-size: 34px; line-height: 1; }
-  .brand .name { font-size: 31px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 380, height: 620 });
+  await page.goto('chrome-extension://' + extId + '/popup/popup.html', {
+    waitUntil: 'domcontentloaded'
+  });
 
-  h1 { font-size: 62px; line-height: 1.05; font-weight: 800; letter-spacing: -2px; color: #fff; }
-  h1 .accent {
-    background: linear-gradient(90deg, #a78bfa 0%, #60a5fa 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  }
-  .sub { margin-top: 24px; font-size: 21px; line-height: 1.5; color: #b6c0e0; max-width: 480px; }
-  .pro-note {
-    margin-top: 14px; display: inline-block; font-size: 15px; font-weight: 600;
-    color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.35);
-    background: rgba(251, 191, 36, 0.1); padding: 6px 12px; border-radius: 8px;
-  }
-  .chips { display: flex; gap: 14px; flex-wrap: wrap; align-self: end; }
-  .chip {
-    display: flex; align-items: center; gap: 9px;
-    padding: 14px 20px; border-radius: 13px; font-size: 16px; font-weight: 600; color: #eef2ff;
-    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.11);
-  }
+  await page.evaluate(async () => {
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set({
+      hasLaunched: true,
+      proUnlocked: true,
+      trialStartDate: Date.now(),
+      // Suppresses the backup tip: it is honest UI, but not what these shots show.
+      lastManualBackupAt: Date.now()
+    });
+  });
 
-  /* ---------- popup mockup ---------- */
-  .popup {
-    width: 580px; border-radius: 18px; overflow: hidden;
-    background: #0c1020; border: 1px solid rgba(255, 255, 255, 0.09);
-    box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
-  }
-  .pop-head {
-    display: flex; align-items: center; gap: 12px;
-    padding: 18px 20px; background: #070a16; border-bottom: 1px solid rgba(255,255,255,0.07);
-  }
-  .pop-head .name { font-size: 19px; font-weight: 700; color: #fff; flex: 1; }
-  .ms { font-size: 14px; color: #8b97bd; }
-  .tick { color: #facc15; font-size: 16px; }
-  .sun { font-size: 16px; }
+  // Let the extension create QuickNotesDB with its own schema before seeding:
+  // opening it here first would create an empty database with no object stores.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator('#newNoteBtn').waitFor({ state: 'visible', timeout: 30000 });
+  await page.waitForTimeout(500);
 
-  .pop-body { padding: 16px; display: flex; flex-direction: column; gap: 13px; }
+  await page.evaluate(async (notes) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('QuickNotesDB', 4);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    const tx = db.transaction('notes', 'readwrite');
+    const store = tx.objectStore('notes');
+    notes.forEach((n, i) => {
+      store.put({
+        id: 'demo-' + i,
+        title: n[0],
+        content: n[1],
+        folderId: n[2],
+        reviewStatus: n[3],
+        pinned: n[4],
+        createdAt: Date.now() - i * 86400000,
+        updatedAt: Date.now() - i * 86400000,
+        contextUrl: i === 1 ? 'https://www.nytimes.com/article' : null,
+        contextTitle: null,
+        contextFavicon: null,
+        reminder: null
+      });
+    });
+    await new Promise((res) => {
+      tx.oncomplete = res;
+    });
+    db.close();
+  }, DEMO_NOTES);
 
-  .search {
-    display: flex; align-items: center; gap: 11px;
-    padding: 13px 15px; border-radius: 11px;
-    background: #131a30; border: 1px solid rgba(255,255,255,0.08); color: #7f8bb0; font-size: 15px;
-  }
-  .search.is-focus { border-color: #7c6cf5; box-shadow: 0 0 0 3px rgba(124, 108, 245, 0.22); }
-  .search .grow { flex: 1; }
+  const reload = async () => {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('#newNoteBtn').waitFor({ state: 'visible', timeout: 30000 });
+    await page.waitForTimeout(700);
+  };
+  const snap = async () =>
+    'data:image/png;base64,' +
+    (await page.locator('body').screenshot()).toString('base64');
 
-  .pills { display: flex; align-items: center; gap: 9px; }
-  .pill {
-    display: flex; align-items: center; gap: 7px;
-    padding: 9px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; color: #dbe2f7;
-    background: #141b33; border: 1px solid rgba(255,255,255,0.09);
-  }
-  .pill.active { background: linear-gradient(90deg, #7c3aed, #6366f1); color: #fff; border-color: transparent; }
-  .pills.is-focus .pill { box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.32); }
-  .pill.plus { margin-left: auto; padding: 9px 13px; }
+  const states = {};
+  await reload();
+  states.notes = await snap();
 
-  .new-note {
-    display: flex; align-items: center; gap: 11px;
-    padding: 16px 18px; border-radius: 12px; color: #fff; font-size: 18px; font-weight: 700;
-    background: linear-gradient(90deg, #7c3aed 0%, #3b6ef5 100%);
-  }
-  .new-note.is-focus { box-shadow: 0 0 0 3px rgba(124, 108, 245, 0.35); }
-  .new-note .kbd { margin-left: auto; font-size: 13px; font-weight: 600; opacity: 0.85; font-family: Consolas, monospace; }
+  await page.locator('#tab-inbox').click();
+  await page.waitForTimeout(400);
+  states.inbox = await snap();
 
-  .note-card {
-    padding: 15px 16px; border-radius: 12px;
-    background: #121829; border: 1px solid rgba(255,255,255,0.06);
-  }
-  .note-title { font-size: 16px; font-weight: 700; color: #fff; }
-  .note-body { margin-top: 6px; font-size: 14px; line-height: 1.45; color: #9aa6ca; }
-  .note-source { margin-top: 8px; font-size: 13px; color: #7a86ab; display: flex; align-items: center; gap: 6px; }
-  .note-foot { margin-top: 11px; display: flex; align-items: center; }
-  .note-date { font-size: 13px; color: #78829f; flex: 1; }
-  .note-tag { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 7px; }
-  .tag-work { background: rgba(56, 130, 246, 0.16); color: #93b4fd; }
-  .tag-personal { background: rgba(167, 139, 250, 0.16); color: #c4b0fd; }
+  await page.locator('#tab-notes').click();
+  await page.locator('.folder-pill[data-folder-id="work"]').click();
+  await page.waitForTimeout(400);
+  states.work = await snap();
 
-  .pro-badge {
-    font-size: 10px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase;
-    padding: 3px 7px; border-radius: 5px; color: #201503;
-    background: linear-gradient(90deg, #fcd34d, #f59e0b);
-  }
+  await page.locator('.folder-pill[data-folder-id="all"]').click();
+  await page.locator('#searchInput').fill('notes');
+  await page.waitForTimeout(600);
+  states.search = await snap();
 
-  .pop-foot {
-    display: flex; align-items: center; justify-content: center; gap: 22px;
-    padding: 14px; background: #070a16; border-top: 1px solid rgba(255,255,255,0.07);
-    font-size: 13px; color: #8b97bd;
-  }
-  .pop-foot .kbd {
-    font-family: Consolas, monospace; font-size: 12px; color: #cbd5f5;
-    background: #182034; border: 1px solid rgba(255,255,255,0.09);
-    padding: 3px 7px; border-radius: 5px; margin-right: 7px;
-  }
-</style></head>
-<body>
-  <div class="stage">
-    <div class="copy">
-      <div class="brand"><span class="bolt">⚡</span><span class="name">Quick Notes</span></div>
-      <div class="copy-mid">
-        <h1>${shot.headTop}<br><span class="accent">${shot.headBottom}</span></h1>
-        <div class="sub">${shot.sub}</div>
-        ${proLine}
-      </div>
-      <div class="chips">
-        ${shot.chips.map((c) => `<div class="chip"><span>${c.icon}</span>${c.label}</div>`).join('')}
-      </div>
-    </div>
-
-    <div class="popup">
-      <div class="pop-head">
-        <span class="bolt">⚡</span><span class="name">Quick Notes</span>
-        <span class="ms">39ms</span><span class="tick">✓</span><span class="sun">☀️</span>
-      </div>
-      <div class="pop-body">
-        <div class="search${focusSearch}">
-          <span>🔍</span><span class="grow">Search notes...</span>${PRO_BADGE}
-        </div>
-        <div class="pills${focusFolders}">
-          <div class="pill active">📋 All Notes</div>
-          <div class="pill">👤 Personal</div>
-          <div class="pill">💼 Work</div>
-          <div class="pill plus">${PRO_BADGE}</div>
-        </div>
-        <div class="new-note${focusNew}">
-          <span>＋</span>New Note<span class="kbd">Ctrl+N</span>
-        </div>
-        ${shot.notes.map(noteCard).join('')}
-      </div>
-      <div class="pop-foot">
-        <span><span class="kbd">Ctrl+Shift+Q</span>Open</span>
-        <span><span class="kbd">Ctrl+N</span>New</span>
-        <span><span class="kbd">Esc</span>Back</span>
-      </div>
-    </div>
-  </div>
-</body></html>`;
+  await page.close();
+  return states;
 }
 
-/**
- * Promotional tiles. Deliberately browser-neutral: the identical file is uploaded
- * to both the Chrome and Edge listings, so any sentence naming one of them is
- * false on the other.
- */
+
 const PROMOS = [
   {
     file: 'quick_notes_promo_small_440x280.png',
@@ -392,21 +323,40 @@ function renderPromoHtml(promo) {
 </body></html>`;
 }
 
-const { chromium } = await import(`file:///${REPO_ROOT.replace(/\\/g, '/')}/node_modules/playwright/index.mjs`);
+const { chromium } = await import(
+  pathToFileURL(path.join(REPO_ROOT, 'node_modules', 'playwright', 'index.mjs')).href
+);
 
 mkdirSync(OUT_DIR, { recursive: true });
 
-const browser = await chromium.launch();
-const page = await browser.newPage({
-  viewport: { width: WIDTH, height: HEIGHT },
-  deviceScaleFactor: 1
+// The extension is launched once and driven through each state; the composition
+// pages then embed those captures. Screenshots of the product, not of a redraw.
+const profileDir = path.join(REPO_ROOT, 'tests', '.pw-shot-profile');
+rmSync(profileDir, { recursive: true, force: true });
+
+const browser = await chromium.launchPersistentContext(profileDir, {
+  headless: false,
+  args: [
+    '--disable-extensions-except=' + REPO_ROOT,
+    '--load-extension=' + REPO_ROOT,
+    '--no-first-run',
+    '--no-default-browser-check'
+  ]
 });
 
+console.log('Capturing the running popup...\n');
+const states = await capturePopupStates(browser);
+
+const page = await browser.newPage();
+await page.setViewportSize({ width: WIDTH, height: HEIGHT });
+
 for (const shot of SHOTS) {
-  await page.setContent(renderHtml(shot), { waitUntil: 'load' });
-  const file = path.join(OUT_DIR, `quick_notes_screenshot_${shot.index}_1280x800.png`);
+  const popup = states[shot.state];
+  if (!popup) throw new Error('no capture for state: ' + shot.state);
+  await page.setContent(renderHtml(shot, popup), { waitUntil: 'load' });
+  const file = path.join(OUT_DIR, 'quick_notes_screenshot_' + shot.index + '_1280x800.png');
   await page.screenshot({ path: file });
-  console.log(`  ok  ${path.relative(REPO_ROOT, file)}`);
+  console.log('  ok  ' + path.relative(REPO_ROOT, file));
 }
 
 for (const promo of PROMOS) {
@@ -414,10 +364,12 @@ for (const promo of PROMOS) {
   await page.setContent(renderPromoHtml(promo), { waitUntil: 'load' });
   const file = path.join(REPO_ROOT, promo.file);
   await page.screenshot({ path: file });
-  console.log(`  ok  ${promo.file}`);
+  console.log('  ok  ' + promo.file);
 }
 
 await browser.close();
+rmSync(profileDir, { recursive: true, force: true });
 console.log(
-  `\nRendered ${SHOTS.length} screenshots at ${WIDTH}x${HEIGHT} and ${PROMOS.length} promo tiles.\n`
+  '\nRendered ' + SHOTS.length + ' screenshots at ' + WIDTH + 'x' + HEIGHT +
+  ' and ' + PROMOS.length + ' promo tiles.\n'
 );
