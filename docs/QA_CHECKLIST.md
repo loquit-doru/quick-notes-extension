@@ -111,6 +111,23 @@ Covers popup load, create/search/folders, review queue, archive/restore, reminde
 
 ---
 
+## Bottom tab bar (1.8.0)
+
+The tabs are driven by state the E2E suite already covers, so these check the
+parts that only appear in a real popup.
+
+| Test | Expected |
+|------|----------|
+| Tab bar sits at the bottom of the popup | Not floating mid-window; the popup sizes to its content |
+| Notes / Inbox / Page / Trash all switch the list | Selected tab is highlighted, others are not |
+| Badges show real counts | Inbox = unreviewed notes, Trash = deleted notes, Page = notes for the current site |
+| **Page tab with a live tab open** | Opened from the toolbar on a site you have notes for, the Page tab lists them. This is the one the suite cannot reach — a directly opened popup has no activeTab context |
+| Opening a note hides the tab bar | Editor owns the popup; Back restores the bar and the Notes tab |
+| Keyboard shortcuts still work | The footer that listed them is gone: `/`, `Ctrl+N` and `Esc` must still function, and are documented in Settings |
+| Settings shows "Rate Quick Notes" | Present, and opens the right store for the browser you are in |
+
+---
+
 ## Manual-only tests
 
 These cannot be faithfully automated with Playwright opening `popup.html` directly. Mark **Pass / Fail** manually before release.
